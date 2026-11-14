@@ -3,14 +3,15 @@ Gift Radar Pro — реальный сканер NFT-подарков Telegram (
 
 Принципы:
   * НИКАКИХ фейковых лотов и случайных чисел. Нет токенов — нет данных.
-  * Токены авторизации лежат в константах ниже; как только они заполнены,
-    парсер делает реальные HTTP-запросы к API маркетов.
+  * Токены авторизации читаются из переменных окружения (os.environ); пока они
+    пустые — лента показывает статус ожидания, фейковые лоты не создаются.
   * Новые лоты встают строго наверх ленты, исчезнувшие (купленные) удаляются.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -19,18 +20,41 @@ from typing import Any, Dict, List, Optional, Sequence
 import aiohttp
 
 # =========================================================================== #
-#  ТОКЕНЫ АВТОРИЗАЦИИ — ВПИСАТЬ СВОИ. Пока пусто — лента показывает статус.
+#  ТОКЕНЫ АВТОРИЗАЦИИ — через переменные окружения.
+#  PORTALS_INIT_DATA / TONNEL_INIT_DATA / MRKT_INIT_DATA
 # =========================================================================== #
 
-PORTALS_INIT_DATA: str = ""   # tonConnectInit или initData из Portals
-TONNEL_INIT_DATA: str = ""    # initData / auth token из Tonnel
-MRKT_INIT_DATA: str = ""      # initData / auth token из MRKT
+def _env_token(name: str) -> str:
+    return (os.environ.get(name) or "").strip()
 
-MARKET_TOKENS: Dict[str, str] = {
-    "portals": PORTALS_INIT_DATA,
-    "tonnel": TONNEL_INIT_DATA,
-    "mrkt": MRKT_INIT_DATA,
-}
+
+# Токен Portals по умолчанию (переопределяется переменной окружения PORTALS_INIT_DATA).
+PORTALS_INIT_DATA: str = _env_token("PORTALS_INIT_DATA") or (
+    "tma query_id=AAHwk5EPBAAAAPCTkQ_LmrRV&user=%7B%22id%22%3A8851133424%2C%22first_name%22%3A%22Koder_botov%22%2C"
+    "%22last_name%22%3A%22I_igr%22%2C%22username%22%3A%22stive_tw_me%22%2C%22language_code%22%3A%22ru%22%2C"
+    "%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2F"
+    "RDd3MY68ATOMBAg2BdqqwN63ZTm5fm5nw5PBAPRCiTwQ41gg01u6tx2bygdPjmGn.svg%22%7D&auth_date=1794655463&"
+    "signature=VoV2Ts_-hNtWprxNSj5zVGPmI-mPEBmVmLdTzmLsUCGrAexWCPeQWKfvGvXqbdkjC-fuTtQ73gGxfFeQZ15vDQ&"
+    "hash=15741605c51bf0c39026319eaae03e6ca4e98018591137e46818f8c3f308bc58"
+)
+
+
+def market_tokens() -> Dict[str, str]:
+    """Portals — с дефолтным токеном; Tonnel/MRKT — только из os.environ."""
+    return {
+        "portals": _env_token("PORTALS_INIT_DATA") or PORTALS_INIT_DATA,
+        "tonnel": _env_token("TONNEL_INIT_DATA"),
+        "mrkt": _env_token("MRKT_INIT_DATA"),
+    }
+
+
+# совместимость: актуальные значения на момент импорта
+_tok = market_tokens()
+PORTALS_INIT_DATA: str = _tok["portals"]
+TONNEL_INIT_DATA: str = _tok["tonnel"]
+MRKT_INIT_DATA: str = _tok["mrkt"]
+
+MARKET_TOKENS: Dict[str, str] = dict(_tok)
 
 # =========================================================================== #
 #  Константы
@@ -41,7 +65,7 @@ SCAN_INTERVAL = 3.0
 
 MARKETS = {
     "portals": {"label": "Portals", "accent": "#0098EA",
-                "api": "https://api.portals-market.com/api/v1/nfts/search",
+                "api": "https://portal-market.com/api/v1/market/items",
                 "web": "https://t.me/portals"},
     "tonnel": {"label": "Tonnel", "accent": "#C77DFF",
                "api": "https://gifts2.tonnel.network/api/pageGifts",
@@ -50,6 +74,13 @@ MARKETS = {
              "api": "https://api.mrkt.tg/api/v1/gifts",
              "web": "https://t.me/mrkt"},
 }
+
+# Эндпоинты Portals — опрашиваются по очереди, первый успешный отдаёт данные.
+PORTALS_ENDPOINTS = (
+    "https://portal-market.com/api/v1/market/items",
+    "https://portal-market.com/api/v1/items",
+    "https://portal-market.com/api/nft/list",
+)
 
 TON_API = "https://tonapi.io/v2"
 FRAGMENT_BASE = "https://fragment.com"
@@ -69,63 +100,84 @@ class MarketParser:
 
     @property
     def token(self) -> str:
-        return MARKET_TOKENS.get(self.key, "").strip()
+        return market_tokens().get(self.key, "")
 
     def enabled(self) -> bool:
         return bool(self.token)
 
     def headers(self) -> Dict[str, str]:
         token = self.token
-        return {
+        host = "https://portal-market.com" if self.key == "portals" else self.spec["web"].replace("https://t.me/", "https://").split("/")[0]
+        h = {
             "accept": "application/json, text/plain, */*",
-            "content-type": "application/json",
-            "origin": self.spec["web"].replace("https://t.me/", "https://").split("/")[0],
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
-            "x-init-data": token,
-            "authorization": f"Bearer {token}",
-            "cookie": f"initData={token}",
+            "origin": host,
+            "referer": host + "/",
+            "authorization": token,
         }
+        if self.key != "portals":
+            h["content-type"] = "application/json"
+            h["x-init-data"] = token
+            h["cookie"] = f"initData={token}"
+        return h
+
+    def endpoints(self) -> Sequence[str]:
+        return PORTALS_ENDPOINTS if self.key == "portals" else (self.spec["api"],)
 
     async def fetch(self, session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
         if not self.enabled():
             return []
-        async with session.get(self.spec["api"], headers=self.headers(),
-                               timeout=aiohttp.ClientTimeout(total=8)) as r:
-            if r.status != 200:
-                return []
+        for url in self.endpoints():
             try:
-                payload = await r.json(content_type=None)
+                async with session.get(url, headers=self.headers(),
+                                       timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    if r.status != 200:
+                        continue
+                    payload = await r.json(content_type=None)
             except Exception:
-                return []
-        return [n for n in (self.normalize(x) for x in self._items(payload)) if n]
+                continue
+            items = [n for n in (self.normalize(x) for x in self._items(payload)) if n]
+            if items:
+                return items
+        return []
 
     def _items(self, payload: Any) -> Sequence[Dict[str, Any]]:
         if isinstance(payload, list):
             return payload
         if isinstance(payload, dict):
-            for k in ("gifts", "items", "data", "nfts", "results"):
+            for k in ("items", "gifts", "data", "nfts", "results", "list", "offers"):
                 v = payload.get(k)
                 if isinstance(v, list):
                     return v
-                if isinstance(v, dict) and isinstance(v.get("items"), list):
-                    return v["items"]
+                if isinstance(v, dict):
+                    for kk in ("items", "gifts", "list", "results"):
+                        if isinstance(v.get(kk), list):
+                            return v[kk]
         return []
 
     def normalize(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            gid = str(item.get("id") or item.get("gift_id") or item.get("nft_id") or "").strip()
+            gift = item.get("gift") if isinstance(item.get("gift"), dict) else {}
+            nft = item.get("nft") if isinstance(item.get("nft"), dict) else {}
+            src = {**nft, **gift, **item}
+            gid = str(src.get("id") or src.get("giftId") or src.get("gift_id") or src.get("nftId")
+                      or src.get("nft_id") or src.get("tokenId") or "").strip()
             if not gid:
                 return None
-            price = float(item.get("price") or item.get("price_ton") or item.get("amount") or 0)
+            price = float(src.get("price") or src.get("priceTon") or src.get("price_ton")
+                          or src.get("amount") or src.get("value") or 0)
             if price <= 0:
                 return None
-            coll = (item.get("collection") or item.get("collection_name")
-                    or item.get("name") or "").strip()
-            attrs = item.get("attributes") or item.get("traits") or []
+            coll = (src.get("collection") if isinstance(src.get("collection"), str) else "")
+            coll = (coll or src.get("collectionName") or src.get("collection_name")
+                    or src.get("title") or src.get("name") or "").strip()
+            attrs = src.get("attributes") or src.get("traits") or []
             model, backdrop, symbol = "", "", ""
             if isinstance(attrs, list):
                 for a in attrs:
-                    t = (a.get("type") or a.get("trait_type") or "").lower()
+                    if not isinstance(a, dict):
+                        continue
+                    t = str(a.get("type") or a.get("trait_type") or a.get("name") or "").lower()
                     v = str(a.get("value") or "")
                     if "model" in t:
                         model = v
@@ -133,16 +185,24 @@ class MarketParser:
                         backdrop = v
                     elif "symbol" in t:
                         symbol = v
-            model = model or str(item.get("model") or "")
-            backdrop = backdrop or str(item.get("backdrop") or "")
-            symbol = symbol or str(item.get("symbol") or "")
-            num = item.get("number") or item.get("num") or ""
+            model = model or str(src.get("model") or "")
+            backdrop = backdrop or str(src.get("backdrop") or "")
+            symbol = symbol or str(src.get("symbol") or "")
+            num = str(src.get("number") or src.get("num") or src.get("index") or "").strip()
+            slug = re.sub(r"[^a-z0-9]", "", (coll or "gift").lower())
+            # прямая ссылка из API, иначе — t.me/{slug}-{num}
+            url = str(src.get("url") or src.get("link") or "")
+            if not url.startswith("http"):
+                url = f"https://t.me/{slug}-{num}" if num else MARKETS[self.key]["web"]
+            image = str(src.get("image") or src.get("preview_url") or src.get("photo") or "")
+            if not image and num:
+                image = f"{FRAGMENT_BASE}/{slug}-{num}.large.jpg"
+            floor = float(src.get("floor") or src.get("floorPrice") or src.get("floor_price")
+                          or src.get("collectionFloor") or 0)
             return build_lot(
-                market=self.key, gift_id=gid, collection=coll, number=str(num),
+                market=self.key, gift_id=gid, collection=coll, number=num,
                 model=model, backdrop=backdrop, symbol=symbol, price=price,
-                floor=float(item.get("floor") or item.get("floor_price") or 0),
-                image=str(item.get("image") or item.get("preview_url") or ""),
-                url=str(item.get("url") or item.get("link") or self.spec["web"]),
+                floor=floor, image=image, url=url,
             )
         except (TypeError, ValueError):
             return None

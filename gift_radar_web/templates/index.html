@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gift Radar Pro</title>
 <script src="https://unpkg.com/@tonconnect/ui@latest/dist/tonconnect-ui.min.js" defer></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js" defer></script>
 <style>
 :root{--bg:#090B10;--card:rgba(255,255,255,.045);--line:rgba(255,255,255,.08);--ton:#0098EA;--gold:#FFB300;
   --green:#2EE59D;--red:#FF5C7A;--txt:#EAF0F7;--dim:#8A94A6}
@@ -31,10 +30,13 @@ header{position:sticky;top:0;z-index:30;backdrop-filter:blur(14px);-webkit-backd
 .badge span{font-size:10px;color:var(--dim);letter-spacing:.5px;font-weight:600}
 .badge b{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
 .badge.ton b{color:#4ec7ff}.badge.gold b{color:var(--gold)}.badge.flash{border-color:rgba(0,152,234,.6)}
-.wallet-btn{border:none;cursor:pointer;padding:10px 16px;border-radius:11px;font-weight:800;font-size:12px;color:#08202e;
-  background:linear-gradient(135deg,#4ec7ff,var(--ton));box-shadow:0 10px 26px -12px var(--ton);transition:.2s;font-family:inherit}
-.wallet-btn:hover{transform:translateY(-2px);filter:brightness(1.1)}
-.wallet-bal{font-size:12px;color:var(--green);font-weight:700}
+.balance-box{display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:12px;
+  background:linear-gradient(135deg,rgba(0,152,234,.14),rgba(255,179,0,.08));border:1px solid rgba(0,152,234,.35)}
+.balance-box .b-main{font-size:16px;font-weight:800;color:#4ec7ff;font-variant-numeric:tabular-nums}
+.balance-box .b-sub{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+.topup-btn{border:none;cursor:pointer;padding:10px 15px;border-radius:11px;font-weight:800;font-size:12px;color:#1a1300;
+  background:linear-gradient(135deg,#FFD54F,var(--gold));box-shadow:0 10px 26px -12px var(--gold);transition:.2s;font-family:inherit}
+.topup-btn:hover{transform:translateY(-2px);filter:brightness(1.08)}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse 1.8s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(46,229,157,.55)}70%{box-shadow:0 0 0 12px rgba(46,229,157,0)}100%{box-shadow:0 0 0 0 rgba(46,229,157,0)}}
 .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:0 24px 12px}
@@ -47,7 +49,7 @@ header{position:sticky;top:0;z-index:30;backdrop-filter:blur(14px);-webkit-backd
 .panel{padding:18px}
 h2,h3{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--dim);margin-bottom:12px;font-weight:700}
 label.row{display:block;font-size:12px;color:var(--dim);margin:14px 0 6px}
-input[type=text],input[type=number],input[type=url],select{width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--line);
+input[type=text],input[type=number],select{width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--line);
   background:#0e1219;color:var(--txt);font-size:13px;outline:none;transition:.2s;font-family:inherit}
 input:focus,select:focus{border-color:var(--ton);box-shadow:0 0 0 3px rgba(0,152,234,.15)}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -76,18 +78,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
 .tag{font-size:11px;padding:3px 8px;border-radius:7px;background:rgba(255,255,255,.055);color:var(--dim)}
 .tag.beauty{color:var(--gold);background:rgba(255,179,0,.12)}
 .tag.mono{color:var(--ton);background:rgba(0,152,234,.12)}
+.tag.ok{color:var(--green);background:rgba(46,229,157,.12)}
 .prices{display:flex;gap:16px;margin-top:10px;flex-wrap:wrap}
 .prices div{font-size:11px;color:var(--dim)}
 .prices b{display:block;font-size:13px;color:var(--txt);margin-top:2px;font-variant-numeric:tabular-nums}
-.right{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
-.profit{font-size:18px;font-weight:800;color:var(--green);font-variant-numeric:tabular-nums;text-align:right}
+.right{display:flex;flex-direction:column;align-items:flex-end;gap:9px}
+.profit{font-size:17px;font-weight:800;color:var(--green);font-variant-numeric:tabular-nums;text-align:right}
 .profit.neg{color:var(--red)}
 .profit small{display:block;font-size:11px;color:var(--dim);font-weight:500;margin-top:2px}
-.btns-sm{display:flex;gap:7px}
-.open,.cart-add{border:none;cursor:pointer;padding:10px 14px;border-radius:11px;font-weight:800;font-size:12px;transition:.18s;white-space:nowrap;font-family:inherit}
-.open{color:#08202e;background:linear-gradient(135deg,#4ec7ff,var(--ton));box-shadow:0 10px 26px -12px var(--ton)}
-.cart-add{color:#1a1300;background:linear-gradient(135deg,#FFD54F,var(--gold))}
-.open:hover,.cart-add:hover{transform:translateY(-1px) scale(1.02);filter:brightness(1.08)}
+.btns{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.btn{border:none;cursor:pointer;padding:10px 14px;border-radius:11px;font-weight:800;font-size:12px;transition:.18s;
+  white-space:nowrap;font-family:inherit}
+.btn.buy{color:#1a1300;background:linear-gradient(135deg,#FFD54F,var(--gold));box-shadow:0 10px 26px -12px var(--gold)}
+.btn.market{color:#08202e;background:linear-gradient(135deg,#4ec7ff,var(--ton));box-shadow:0 10px 26px -12px var(--ton)}
+.btn.wd{color:#FAF6FF;background:linear-gradient(135deg,#C77DFF,#8A3FFC)}
+.btn:hover{transform:translateY(-1px) scale(1.02);filter:brightness(1.08)}
+.btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
 .empty{text-align:center;padding:46px 24px;color:var(--dim);font-size:13px;line-height:1.7}
 .empty b{color:var(--gold);display:block;margin-bottom:8px;font-size:15px}
 .feed{display:flex;flex-direction:column;gap:12px}
@@ -98,53 +104,35 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
 .main-btn{padding:12px 20px;border-radius:12px;border:none;cursor:pointer;font-weight:800;font-size:13px;
   color:#1a1300;background:linear-gradient(135deg,#FFD54F,var(--gold));box-shadow:0 12px 30px -14px var(--gold);transition:.2s;font-family:inherit;white-space:nowrap}
 .main-btn:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.main-btn.ton{color:#08202e;background:linear-gradient(135deg,#4ec7ff,var(--ton));box-shadow:0 12px 30px -14px var(--ton)}
 .main-btn.ghost{color:var(--dim);background:rgba(255,255,255,.05);box-shadow:none;border:1px solid var(--line)}
-.main-btn.ghost:hover{color:var(--red);border-color:rgba(255,92,122,.5)}
-.main-btn.ton-btn{color:#08202e;background:linear-gradient(135deg,#4ec7ff,var(--ton));box-shadow:0 12px 30px -14px var(--ton)}
 .tab{display:none}.tab.on{display:block;animation:tabin .35s cubic-bezier(.2,.8,.2,1)}
 @keyframes tabin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-.calc-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:16px;align-items:start}
-.preview-img{width:100%;aspect-ratio:1;border-radius:16px;background:#0e1219 center/cover no-repeat;border:1px solid var(--line);
-  position:relative;overflow:hidden;transition:transform .4s}
-.preview-img.floaty{animation:float 6s ease-in-out infinite}
-.preview-img.shine::after{content:"";position:absolute;inset:0;pointer-events:none;
-  background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.22) 48%,transparent 62%);background-size:250% 250%;
-  animation:shine 4.5s ease-in-out infinite}
-@keyframes shine{0%{background-position:120% 0}55%,100%{background-position:-60% 0}}
-.mono-bar{height:8px;border-radius:99px;background:#1b2230;overflow:hidden;margin-top:8px}
-.mono-bar i{display:block;height:100%;background:linear-gradient(90deg,#FF5C7A,#FFB300,#2EE59D);transition:width .6s cubic-bezier(.2,.8,.2,1)}
-.spec{width:100%;border-collapse:collapse;margin-top:12px;font-size:12.5px}
-.spec th{text-align:left;color:var(--dim);font-weight:600;padding:8px 6px;border-bottom:1px solid var(--line);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
-.spec td{padding:9px 6px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:top}
-.spec td:last-child{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
-.spread-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.spread-btns button{flex:1;min-width:64px;padding:9px 6px;border-radius:10px;border:1px solid var(--line);background:#0e1219;
-  color:var(--dim);cursor:pointer;font-weight:800;font-size:12px;font-family:inherit;transition:.2s}
-.spread-btns button:hover{border-color:var(--ton);color:var(--txt)}
-.spread-btns button.on{border-color:var(--gold);color:var(--gold);background:rgba(255,179,0,.1)}
-.history{display:flex;flex-direction:column;gap:8px}
-.hist-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.035);
-  border:1px solid var(--line);cursor:pointer;transition:.2s;font-size:12.5px}
-.hist-item:hover{border-color:var(--ton);background:rgba(0,152,234,.08)}
-.hist-item img{width:34px;height:34px;border-radius:8px;object-fit:cover;background:#0e1219;border:1px solid var(--line)}
-.hist-item span{color:var(--dim);margin-left:auto;font-size:11px}
-pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:12px;color:var(--dim);white-space:pre-wrap;max-height:320px;overflow:auto;margin-top:10px}
+pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:12px;color:var(--dim);white-space:pre-wrap;max-height:300px;overflow:auto;margin-top:10px}
 .muted{font-size:12px;color:var(--dim);line-height:1.6}
-.modal{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;background:rgba(3,5,9,.72);
-  backdrop-filter:blur(6px)}
+.mono-addr{font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all;padding:10px;border-radius:10px;
+  background:#0e1219;border:1px dashed rgba(0,152,234,.5);color:#7cd3ff}
+.wd-form{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.wd-form input{flex:1;min-width:160px}
+.modal{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;background:rgba(3,5,9,.75);
+  backdrop-filter:blur(6px);padding:16px;overflow:auto}
 .modal.on{display:flex;animation:fade .25s ease}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-.modal-card{width:min(400px,92vw);padding:22px;animation:pop .3s cubic-bezier(.2,.8,.2,1)}
+.modal-card{width:min(520px,96vw);padding:22px;animation:pop .3s cubic-bezier(.2,.8,.2,1);max-height:92vh;overflow:auto}
 @keyframes pop{from{opacity:0;transform:scale(.94) translateY(10px)}to{opacity:1;transform:none}}
-.wallets{display:flex;flex-direction:column;gap:10px;margin-top:14px}
-.wal{display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:14px;background:rgba(255,255,255,.04);
-  border:1px solid var(--line);cursor:pointer;transition:.2s;font-family:inherit;color:var(--txt);font-size:14px;font-weight:700;width:100%;text-align:left}
-.wal:hover{border-color:var(--ton);background:rgba(0,152,234,.1);transform:translateX(3px)}
+.pay-opt{border-radius:14px;border:1px solid var(--line);padding:14px;margin-top:12px;background:rgba(255,255,255,.03)}
+.pay-opt h4{font-size:14px;margin-bottom:8px}
+.wallets{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.wal{flex:1;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);
+  border:1px solid var(--line);cursor:pointer;transition:.2s;font-family:inherit;color:var(--txt);font-size:12.5px;font-weight:700}
+.wal:hover{border-color:var(--ton);background:rgba(0,152,234,.1)}
+.wal.sel{border-color:var(--gold);background:rgba(255,179,0,.1);color:var(--gold)}
 .wal svg{flex:none}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);z-index:200;padding:12px 20px;border-radius:12px;
-  background:rgba(0,152,234,.95);color:#fff;font-weight:700;font-size:13px;opacity:0;transition:.3s;pointer-events:none}
+  background:rgba(0,152,234,.95);color:#fff;font-weight:700;font-size:13px;opacity:0;transition:.3s;pointer-events:none;max-width:90vw;text-align:center}
 .toast.on{opacity:1;transform:translateX(-50%)}
-@media(max-width:1100px){.wrap{grid-template-columns:1fr}.side{position:static}.calc-grid{grid-template-columns:1fr}}
+.toast.err{background:rgba(255,92,122,.95)}.toast.ok{background:rgba(46,229,157,.95);color:#052016}
+@media(max-width:1100px){.wrap{grid-template-columns:1fr}.side{position:static}}
 @media(max-width:640px){.lot{grid-template-columns:1fr}.ticker{width:100%}.tabs{grid-template-columns:1fr}}
 </style>
 </head>
@@ -167,7 +155,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
         <circle cx="48" cy="56" r="2" fill="#7CFFCB"/><circle cx="72" cy="56" r="2" fill="#7CFFCB"/>
         <path d="M60 56h3M33 55l-6-2M87 55l6-2" stroke="#22C3FF" stroke-width="3" stroke-linecap="round"/>
       </svg>
-      <div><h1>Gift <span>Radar Pro</span></h1><small>LIVE · FEE 2% · PORTALS · TONNEL · MRKT</small></div>
+      <div><h1>Gift <span>Radar Pro</span></h1><small>FEE 2% · PORTALS · TONNEL · MRKT</small></div>
     </div>
     <div class="ticker">
       <div class="badge ton"><span>TON / USD</span><b id="rTonUsd">—</b></div>
@@ -175,13 +163,18 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
       <div class="badge gold"><span>TON / BYN</span><b id="rTonByn">—</b></div>
       <div class="badge"><span>USD / RUB</span><b id="rUsdRub">—</b></div>
     </div>
-    <button class="wallet-btn" id="walletBtn">🔌 Подключить кошелек</button>
-    <span class="wallet-bal" id="walletBal"></span>
+    <div class="balance-box">
+      <div>
+        <div class="b-main" id="balTon">0.00 TON</div>
+        <div class="b-sub" id="balSub">$0.00 · 0.00 BYN</div>
+      </div>
+    </div>
+    <button class="topup-btn" id="topupBtn">➕ Пополнить</button>
     <span class="dot" title="live"></span>
   </div>
   <nav class="tabs">
     <button class="tab-btn on" data-tab="radar">📡 Живой Радар</button>
-    <button class="tab-btn" data-tab="calc">🧮 Калькулятор по ссылке</button>
+    <button class="tab-btn" data-tab="inv">🎒 Инвентарь (<span id="invCount">0</span>)</button>
     <button class="tab-btn" data-tab="cart">🛒 Корзина (<span id="cartCount">0</span>)</button>
   </nav>
 </header>
@@ -203,6 +196,9 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     <div class="two"><input type="number" id="priceFrom" placeholder="от" min="0" step="0.1">
       <input type="number" id="priceTo" placeholder="до" min="0" step="0.1"></div>
     <label class="chk" style="margin-top:10px"><input type="checkbox" id="beauty"> Красивые номера</label>
+    <h2 style="margin-top:18px">Тайник</h2>
+    <div class="line"><span>Ваш ID</span><b id="uidLbl">guest</b></div>
+    <div class="line"><span>Комиссия вывода</span><b>0.6 TON</b></div>
   </aside>
 
   <main>
@@ -211,7 +207,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
       <div class="stats">
         <div class="glass stat"><span>Лотов в ленте</span><b style="color:var(--ton)" id="sTotal">0</b></div>
         <div class="glass stat"><span>Лучшая скидка</span><b style="color:var(--gold)" id="sBest">—</b></div>
-        <div class="glass stat"><span>Суммарный профит</span><b style="color:var(--green)" id="sProfit">—</b></div>
+        <div class="glass stat"><span>Суммарный профит (−2%)</span><b style="color:var(--green)" id="sProfit">—</b></div>
       </div>
       <div class="feed" id="feed"></div>
       <div class="glass empty" id="empty" style="display:none">
@@ -228,120 +224,81 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
           <path d="M84 64c8-4 20-2 24 6 5 9 3 24-4 30-6 5-16 5-21 0-7-7-8-27 1-36z" fill="#181206" stroke="#FFB300" stroke-width="2"/>
           <circle cx="97" cy="85" r="10" fill="#0098EA"/><path d="M97 79l-5 6h3.4v6h3.2v-6H102z" fill="#fff"/>
         </svg>
-        <b id="emptyTitle">Ожидание токенов авторизации маркетов в scanner.py — демо-фейки отключены</b>
-        <span id="emptySub">Впишите PORTALS_INIT_DATA / TONNEL_INIT_DATA / MRKT_INIT_DATA в scanner.py — лента оживёт сама.</span>
+        <b id="emptyTitle">Ожидание подключения маркетов в scanner.py</b>
+        <span id="emptySub">Задайте переменные окружения PORTALS_INIT_DATA / TONNEL_INIT_DATA / MRKT_INIT_DATA — лента оживёт сама. Фейковые лоты не создаются.</span>
       </div>
     </section>
 
-    <!-- ===== CALC ===== -->
-    <section class="tab" id="tab-calc">
+    <!-- ===== INVENTORY ===== -->
+    <section class="tab" id="tab-inv">
       <div class="glass panel">
-        <h2>🧮 Калькулятор по ссылке · комиссия 2%</h2>
-        <div class="two" style="grid-template-columns:2fr 1fr auto">
-          <input type="url" id="giftUrl" placeholder="https://t.me">
-          <input type="number" id="buyPrice" placeholder="Цена покупки (TON)" min="0" step="0.1" value="10">
-          <button class="main-btn" id="calcBtn">Оценить подарок</button>
+        <h2>🎒 Инвентарь — купленные подарки</h2>
+        <div class="feed" id="invList"></div>
+        <div class="empty" id="invEmpty">
+          <b>Инвентарь пуст</b>
+          <span>Купите подарок на сайте — он появится здесь.</span>
         </div>
-        <p class="muted" style="margin-top:10px">Вставьте реальную ссылку вида https://t.me/… или https://fragment.com/… — сервер делает GET-запрос, разбирает OpenGraph, подтягивает 2K-картинку и Lottie-анимацию с fragment.com.</p>
-      </div>
-
-      <div class="calc-grid" style="margin-top:16px">
-        <div class="glass panel">
-          <h3>Карточка подарка</h3>
-          <div class="preview-img" id="pvImg"><div id="lottieBox" style="position:absolute;inset:0"></div></div>
-          <h4 id="pvName" style="margin-top:12px;font-size:15px">—</h4>
-          <p id="pvNote" class="muted" style="margin-top:6px"></p>
-
-          <table class="spec">
-            <thead><tr><th>Характеристика</th><th>Значение</th><th>Редкость</th></tr></thead>
-            <tbody>
-              <tr><td>🎨 Модель</td><td id="spModel">—</td><td id="spModelR" class="muted">—</td></tr>
-              <tr><td>🖼 Фон</td><td id="spBack">—</td><td id="spBackR" class="muted">—</td></tr>
-              <tr><td>🔣 Символ</td><td id="spSym">—</td><td id="spSymR" class="muted">—</td></tr>
-              <tr><td>#️⃣ Номер</td><td id="spNum">—</td><td class="muted">—</td></tr>
-              <tr><td>🌈 Монохромность</td><td id="spMono">0%</td><td class="muted">индекс совпадения оттенков</td></tr>
-              <tr><td>💧 Ликвидность</td><td id="spLiq">—</td><td class="muted" id="spLiqNote">—</td></tr>
-              <tr><td>💰 Рекомендуемая цена</td><td id="spRec">—</td><td class="muted" id="spRecNote">—</td></tr>
-            </tbody>
-          </table>
-          <div class="mono-bar"><i id="pvMonoBar" style="width:0%"></i></div>
-        </div>
-
-        <div class="glass panel">
-          <h3>Спред и прибыль (комиссия 2%)</h3>
-          <div class="line"><span>Цена покупки</span><b id="cBuy">—</b></div>
-          <div class="line"><span>Целевая цена продажи</span><b style="color:var(--ton)" id="cTarget">—</b></div>
-          <div class="line"><span>Комиссия маркета (2%)</span><b style="color:var(--gold)" id="cFee">—</b></div>
-          <div class="line total"><span>Чистая прибыль</span><b id="cProfit">—</b></div>
-          <div class="line"><span>В USD</span><b id="cUsd">—</b></div>
-          <div class="line"><span>В BYN</span><b id="cByn">—</b></div>
-
-          <label class="row">Быстрый спред (Target Profit)</label>
-          <div class="spread-btns">
-            <button data-spread="10">+10%</button>
-            <button data-spread="20">+20%</button>
-            <button data-spread="35">+35%</button>
-            <button data-spread="50">+50%</button>
-          </div>
-
-          <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
-            <button class="main-btn ton-btn" id="snipeBtn" style="flex:1">🚀 Снайп в 1 клик</button>
-            <button class="main-btn ghost" id="copyBtn" style="flex:1">📋 Скопировать для авто-бая</button>
-          </div>
-          <p class="muted" style="margin-top:8px">Курсы: 1 TON = <b id="cRateUsd">—</b> USD = <b id="cRateByn">—</b> BYN</p>
-          <pre id="jsonOut" style="display:none"></pre>
-        </div>
-      </div>
-
-      <div class="glass panel" style="margin-top:16px">
-        <h3>🕘 Журнал проверенных подарков (последние 10)</h3>
-        <div class="history" id="histList"></div>
-        <p class="muted" id="histEmpty">Пока пусто — проверьте первый подарок выше.</p>
       </div>
     </section>
 
     <!-- ===== CART ===== -->
     <section class="tab" id="tab-cart">
       <div class="glass panel">
-        <h2>🛒 Корзина</h2>
+        <h2>🛒 Корзина / очередь автопокупки</h2>
         <div id="cartList" class="feed"></div>
-        <div id="cartEmpty" class="empty">
+        <div class="empty" id="cartEmpty">
           <b>Корзина пуста</b>
-          <span>Лоты добавятся из ленты радара или из калькулятора. Лента ждёт токены авторизации маркетов в scanner.py — демо-фейки отключены.</span>
+          <span>Покупки на сайте и задачи автопокупки появятся здесь.</span>
         </div>
-        <div class="line"><span>Сумма в TON</span><b id="cartTotal">0 TON</b></div>
-        <div class="line"><span>Сумма в USD</span><b id="cartUsd">$0.00</b></div>
-        <div class="line"><span>Сумма в BYN</span><b id="cartByn">0.00 BYN</b></div>
-        <div class="line total"><span>Суммарный профит (после 2%)</span><b id="cartProfit">0 TON</b></div>
-        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
-          <button class="main-btn" id="autobuyBtn">📋 Подготовить JSON-задачу для авто-боя</button>
-          <button class="main-btn ghost" id="clearCartBtn">🗑 Очистить корзину</button>
-        </div>
-        <pre id="autobuyOut" style="display:none"></pre>
+        <div class="line"><span>Сумма покупок</span><b id="cartTotal">0 TON</b></div>
+        <div class="line"><span>В USD / BYN</span><b id="cartUsdByn">—</b></div>
+        <div class="line total"><span>Суммарный профит (−2%)</span><b id="cartProfit">0 TON</b></div>
+        <button class="main-btn" id="ordersBtn" style="margin-top:14px">📋 Показать JSON-очередь заказов</button>
+        <pre id="ordersOut" style="display:none"></pre>
       </div>
     </section>
   </main>
 </div>
 
-<div class="modal" id="walletModal">
+<!-- ===== TOPUP MODAL ===== -->
+<div class="modal" id="topupModal">
   <div class="glass modal-card">
-    <h3 style="font-size:14px;color:var(--txt)">Подключить кошелёк</h3>
-    <p class="muted" style="margin-top:6px">TON Connect · подтверждение подписи в кошельке</p>
-    <div class="wallets">
-      <button class="wal" data-wallet="tonkeeper">
-        <svg width="30" height="30" viewBox="0 0 30 30"><rect width="30" height="30" rx="9" fill="#0098EA"/><path d="M8 9h14l-7 13z" fill="#fff"/></svg>
-        Tonkeeper</button>
-      <button class="wal" data-wallet="telegram">
-        <svg width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="15" fill="#2AABEE"/><path d="M7 14.5l15-6-2.6 13-5-3.5-2.4 2.3-.4-4.2z" fill="#fff"/></svg>
-        Telegram Wallet</button>
-      <button class="wal" data-wallet="mytonwallet">
-        <svg width="30" height="30" viewBox="0 0 30 30"><rect width="30" height="30" rx="9" fill="#0B1622" stroke="#0098EA"/><path d="M8 20V10l7 6 7-6v10" stroke="#4ec7ff" stroke-width="2.4" fill="none" stroke-linejoin="round"/></svg>
-        MyTonWallet</button>
+    <h3 style="font-size:15px;color:var(--txt)">➕ Пополнение баланса</h3>
+    <p class="muted" style="margin-top:6px">Курс обновляется автоматически · TON/USD KuCoin, USD/BYN НБРБ, USD/RUB ЦБ РФ</p>
+
+    <div class="pay-opt">
+      <h4>1) Через TON Connect</h4>
+      <div class="wallets">
+        <button class="wal sel" data-wallet="tonkeeper">
+          <svg width="24" height="24" viewBox="0 0 30 30"><rect width="30" height="30" rx="9" fill="#0098EA"/><path d="M8 9h14l-7 13z" fill="#fff"/></svg>
+          Tonkeeper</button>
+        <button class="wal" data-wallet="telegram">
+          <svg width="24" height="24" viewBox="0 0 30 30"><circle cx="15" cy="15" r="15" fill="#2AABEE"/><path d="M7 14.5l15-6-2.6 13-5-3.5-2.4 2.3-.4-4.2z" fill="#fff"/></svg>
+          Telegram</button>
+        <button class="wal" data-wallet="mytonwallet">
+          <svg width="24" height="24" viewBox="0 0 30 30"><rect width="30" height="30" rx="9" fill="#0B1622" stroke="#0098EA"/><path d="M8 20V10l7 6 7-6v10" stroke="#4ec7ff" stroke-width="2.4" fill="none" stroke-linejoin="round"/></svg>
+          MyTonWallet</button>
+      </div>
+      <label class="row">Сумма в TON</label>
+      <input type="number" id="topupAmount" value="10" min="0.1" step="0.1">
+      <p class="muted" style="margin-top:6px">Получатель: <span class="mono-addr" id="depAddr1">DEPOSIT_WALLET не задан</span></p>
+      <button class="main-btn ton" id="connectPayBtn" style="width:100%;margin-top:10px">🔌 Подключить и отправить</button>
     </div>
-    <div style="display:flex;gap:10px;margin-top:16px">
-      <button class="main-btn ghost" id="modalClose" style="flex:1;color:var(--dim)">Отмена</button>
-      <button class="main-btn" id="modalConnect" style="flex:1">Продолжить</button>
+
+    <div class="pay-opt">
+      <h4>2) Прямой перевод на кошелёк бота</h4>
+      <p class="muted">Адрес депозита</p>
+      <p class="mono-addr" id="depAddr2" style="margin-top:6px">DEPOSIT_WALLET не задан</p>
+      <p class="muted" style="margin-top:8px">Комментарий / Memo (обязательно)</p>
+      <p class="mono-addr" id="memoLbl" style="margin-top:6px">—</p>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="main-btn ghost" id="copyAddr" style="padding:9px 14px;font-size:12px">Копировать адрес</button>
+        <button class="main-btn ghost" id="copyMemo" style="padding:9px 14px;font-size:12px">Копировать Memo</button>
+      </div>
+      <button class="main-btn" id="checkPayBtn" style="width:100%;margin-top:10px">✅ Я оплатил — проверить платёж</button>
     </div>
+
+    <button class="main-btn ghost" id="closeTopup" style="width:100%;margin-top:16px">Закрыть</button>
   </div>
 </div>
 
@@ -352,86 +309,133 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   const ton = v => (+v).toFixed(2) + ' TON';
-  const FEE = 0.02;
+  const FEE = 0.02, WD_FEE = 0.6;
   const MCLR = { portals: '#0098EA', tonnel: '#C77DFF', mrkt: '#FFB300' };
-  let rate = { ton_usd: 5, usd_byn: 3.27, ton_byn: 16.35, usd_rub: 95 };
-  let cart = JSON.parse(localStorage.getItem('gr_cart') || '[]');
-  let history = JSON.parse(localStorage.getItem('gr_history') || '[]');
-  let lastTopId = null, chosenWallet = 'tonkeeper', tonConnect = null;
-  let current = null, targetPrice = 0, lottieAnim = null;
+  const USD = () => rate.ton_usd || 0, BYN = () => rate.ton_byn || 0;
 
-  function toast(msg) {
-    const t = $('toast'); t.textContent = msg; t.classList.add('on');
-    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 1800);
+  let rate = { ton_usd: 0, usd_byn: 0, ton_byn: 0, usd_rub: 0 };
+  let balance = { balance_ton: 0 };
+  let inventory = [], orders = [], lastTopId = null, tonConnect = null, chosenWallet = 'tonkeeper', memo = '';
+  const walletName = localStorage.getItem('gr_wallet_app') || 'tonkeeper';
+
+  /* ---------- user id ---------- */
+  let uid = localStorage.getItem('gr_uid');
+  if (!uid) { uid = 'u' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); localStorage.setItem('gr_uid', uid); }
+  $('uidLbl').textContent = uid;
+  const Q = u => u + (u.includes('?') ? '&' : '?') + 'user_id=' + encodeURIComponent(uid);
+
+  function toast(msg, type) {
+    const t = $('toast'); t.textContent = msg; t.className = 'toast on' + (type ? ' ' + type : '');
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2600);
   }
 
-  /* -------- вкладки -------- */
+  /* ---------- вкладки ---------- */
   document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('on', x === b));
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
-    if (b.dataset.tab === 'cart') renderCart();
+    if (b.dataset.tab === 'inv') loadInventory();
+    if (b.dataset.tab === 'cart') loadCart();
   }));
 
-  /* -------- курсы -------- */
+  /* ---------- курсы ---------- */
   function paintRates(r) {
     if (!r) return;
-    rate = Object.assign(rate, r);
+    Object.assign(rate, r);
     const f = (v, d) => v ? (+v).toFixed(d) : '—';
     $('rTonUsd').textContent = f(rate.ton_usd, 3);
     $('rUsdByn').textContent = f(rate.usd_byn, 4);
     $('rTonByn').textContent = f(rate.ton_byn, 3);
     $('rUsdRub').textContent = f(rate.usd_rub, 2);
-    $('cRateUsd').textContent = f(rate.ton_usd, 3);
-    $('cRateByn').textContent = f(rate.ton_byn, 3);
     document.querySelectorAll('.badge').forEach(b => { b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 700); });
   }
   async function loadRates(force) {
-    try { const d = await (await fetch('/api/rates' + (force ? '?refresh=1' : ''), { cache: 'no-store' })).json(); paintRates(d.rates); } catch (e) {}
+    try { paintRates((await (await fetch('/api/rates' + (force ? '?refresh=1' : ''), { cache: 'no-store' })).json()).rates); } catch (e) {}
   }
 
-  /* -------- кошелёк -------- */
+  /* ---------- баланс ---------- */
+  function paintBalance(d) {
+    if (!d) return;
+    balance = d;
+    $('balTon').textContent = (+d.balance_ton).toFixed(2) + ' TON';
+    $('balSub').textContent = '$' + (+d.balance_usd).toFixed(2) + ' · ' + (+d.balance_byn).toFixed(2) + ' BYN';
+    const dep = d.deposit_wallet || 'DEPOSIT_WALLET не задан';
+    $('depAddr1').textContent = dep; $('depAddr2').textContent = dep;
+  }
+  async function loadBalance() {
+    try { paintBalance(await (await fetch(Q('/api/balance'), { cache: 'no-store' })).json()); } catch (e) {}
+  }
+
+  /* ---------- TON Connect ---------- */
   async function initTon() {
-    if (!window.TON_CONNECT_UI || tonConnect) return tonConnect;
-    tonConnect = new TON_CONNECT_UI.TonConnectUI({
-      manifestUrl: 'https://ton-connect.github.io/demo-dapp-with-react-ui/tonconnect-manifest.json',
-      uiPreferences: { theme: 'DARK' }
-    });
-    tonConnect.onStatusChange(w => {
-      if (!w) { $('walletBtn').textContent = '🔌 Подключить кошелек'; $('walletBal').textContent = ''; return; }
-      const a = w.account.address;
-      $('walletBtn').textContent = '👛 ' + a.slice(0, 4) + '…' + a.slice(-4);
-      loadBalance(a);
-    });
+    if (!window.TON_CONNECT_UI) return null;
+    if (!tonConnect) {
+      tonConnect = new TON_CONNECT_UI.TonConnectUI({
+        manifestUrl: 'https://ton-connect.github.io/demo-dapp-with-react-ui/tonconnect-manifest.json',
+        uiPreferences: { theme: 'DARK' }
+      });
+    }
     return tonConnect;
   }
-  async function loadBalance(addr) {
-    try {
-      const d = await (await fetch(`https://tonapi.io/v2/accounts/${addr}`, { cache: 'no-store' })).json();
-      $('walletBal').textContent = ((+(d.balance || 0)) / 1e9).toFixed(2) + ' TON';
-    } catch (e) { $('walletBal').textContent = '— TON'; }
+  function toNano(amount) {
+    const [a, b] = String(amount).split('.');
+    return BigInt(a || '0') * 1000000000n + BigInt((b || '').padEnd(9, '0').slice(0, 9));
   }
-  $('walletBtn').addEventListener('click', async () => {
-    if (tonConnect && tonConnect.account) { try { await tonConnect.disconnect(); } catch (e) {} return; }
-    $('walletModal').classList.add('on');
-  });
-  $('modalClose').addEventListener('click', () => $('walletModal').classList.remove('on'));
-  $('walletModal').addEventListener('click', e => { if (e.target === $('walletModal')) $('walletModal').classList.remove('on'); });
+
+  /* ---------- модалка пополнения ---------- */
+  async function openTopup() {
+    $('topupModal').classList.add('on');
+    document.querySelectorAll('.wal').forEach(w => w.classList.toggle('sel', w.dataset.wallet === chosenWallet));
+    try {
+      const d = await (await fetch(Q('/api/topup/memo'), { cache: 'no-store' })).json();
+      memo = d.memo || '';
+      $('memoLbl').textContent = memo || '—';
+      if (d.deposit_wallet) paintBalance({ ...balance, deposit_wallet: d.deposit_wallet });
+    } catch (e) {}
+    await loadBalance();
+  }
+  $('topupBtn').addEventListener('click', openTopup);
+  $('closeTopup').addEventListener('click', () => $('topupModal').classList.remove('on'));
+  $('topupModal').addEventListener('click', e => { if (e.target === $('topupModal')) $('topupModal').classList.remove('on'); });
   document.querySelectorAll('.wal').forEach(w => w.addEventListener('click', () => {
     chosenWallet = w.dataset.wallet;
-    document.querySelectorAll('.wal').forEach(x => x.style.borderColor = x === w ? 'var(--ton)' : '');
+    localStorage.setItem('gr_wallet_app', chosenWallet);
+    document.querySelectorAll('.wal').forEach(x => x.classList.toggle('sel', x === w));
   }));
-  $('modalConnect').addEventListener('click', async () => {
-    try { localStorage.setItem('gr_wallet_app', chosenWallet); } catch (e) {}
-    $('walletModal').classList.remove('on');
-    if (!window.TON_CONNECT_UI) { $('walletBal').textContent = 'TON Connect недоступен'; return; }
+  const copy = async (txt, ok) => { try { await navigator.clipboard.writeText(txt); toast(ok, 'ok'); } catch (e) { toast('Не удалось скопировать', 'err'); } };
+  $('copyAddr').addEventListener('click', () => copy($('depAddr2').textContent, 'Адрес скопирован'));
+  $('copyMemo').addEventListener('click', () => copy(memo, 'Memo скопирован'));
+
+  $('connectPayBtn').addEventListener('click', async () => {
     const tc = await initTon();
+    if (!tc) { toast('TON Connect недоступен', 'err'); return; }
+    const dest = $('depAddr1').textContent.trim();
+    if (!/^[A-Za-z0-9_\-:+]{40,}$/.test(dest)) { toast('DEPOSIT_WALLET не задан в app.py', 'err'); return; }
+    const amount = parseFloat($('topupAmount').value) || 0;
+    if (amount < 0.1) { toast('Минимальная сумма 0.1 TON', 'err'); return; }
     try {
-      if (chosenWallet === 'telegram') window.open('https://t.me/wallet?startattach=tonconnect', '_blank', 'noopener');
-      await tc.openModal();
-    } catch (e) { $('walletBal').textContent = 'Ошибка подключения'; }
+      if (!tc.account) await tc.openModal();
+      if (!tc.account) { toast('Подключите кошелёк', 'err'); return; }
+      await tc.sendTransaction({
+        validUntil: Math.floor(Date.now() / 1000) + 600,
+        messages: [{ address: dest, amount: toNano(amount).toString() }]
+      });
+      toast('Транзакция отправлена — нажмите «Я оплатил»', 'ok');
+    } catch (e) { toast('Отправка отменена или ошибка', 'err'); }
   });
 
-  /* -------- фильтры -------- */
+  $('checkPayBtn').addEventListener('click', async () => {
+    if (!memo) { toast('Нет Memo', 'err'); return; }
+    $('checkPayBtn').disabled = true; $('checkPayBtn').textContent = 'Проверяем…';
+    try {
+      const d = await (await fetch(Q('/api/topup/check?memo=' + encodeURIComponent(memo)), { cache: 'no-store' })).json();
+      if (d.ok && d.credited) { toast(d.message, 'ok'); paintBalance(d); }
+      else if (d.ok) toast(d.message || 'Платёж не найден');
+      else toast(d.error || 'Ошибка проверки', 'err');
+    } catch (e) { toast('Сервер недоступен', 'err'); }
+    finally { $('checkPayBtn').disabled = false; $('checkPayBtn').textContent = '✅ Я оплатил — проверить платёж'; }
+  });
+
+  /* ---------- фильтры ---------- */
   const params = () => ({
     markets: [...document.querySelectorAll('.mk:checked')].map(x => x.value).join(','),
     min_profit: $('minProfit').value, min_mono: $('minMono').value,
@@ -446,52 +450,25 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
   ['search', 'priceFrom', 'priceTo', 'beauty'].forEach(id => $(id).addEventListener('input', reload));
   document.querySelectorAll('.mk').forEach(m => m.addEventListener('change', reload));
 
-  /* -------- корзина -------- */
-  function saveCart() {
-    try { localStorage.setItem('gr_cart', JSON.stringify(cart)); } catch (e) {}
-    $('cartCount').textContent = cart.length;
-    fetch('/api/cart', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ items: cart }) }).catch(() => {});
+  /* ---------- покупка ---------- */
+  async function buyLot(it, btn) {
+    if (balance.balance_ton < it.price) {
+      toast(`Недостаточно средств: нужно ${ton(it.price)}, на балансе ${ton(balance.balance_ton)}`, 'err');
+      openTopup(); return;
+    }
+    btn.disabled = true; btn.textContent = 'Покупаем…';
+    try {
+      const r = await fetch(Q('/api/buy'), { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ lot_id: it.id }) });
+      const d = await r.json();
+      if (!d.ok) { toast(d.error || 'Ошибка покупки', 'err'); btn.disabled = false; btn.textContent = '⚡ Купить на сайте'; if (d.balance_ton !== undefined) paintBalance(d); return; }
+      paintBalance(d);
+      toast(`Куплено: ${d.bought} #${d.number} за ${ton(d.price)}`, 'ok');
+      lastTopId = null; tick(); loadInventory();
+    } catch (e) { toast('Сервер недоступен', 'err'); btn.disabled = false; btn.textContent = '⚡ Купить на сайте'; }
   }
-  function addToCart(it) {
-    if (cart.some(x => x.id === it.id)) { toast('Уже в корзине'); return; }
-    cart.push({ id: it.id, collection: it.collection, number: it.number, price: it.price,
-      rec_price: it.rec_price, market_label: it.market_label, market: it.market, url: it.url,
-      image: it.image, profit_ton: it.profit_ton, floor_discount: it.floor_discount || 0 });
-    saveCart();
-    if ($('tab-cart').classList.contains('on')) renderCart();
-    toast('Добавлено в корзину');
-  }
-  function renderCart() {
-    const list = $('cartList');
-    $('cartEmpty').style.display = cart.length ? 'none' : 'block';
-    list.replaceChildren(...cart.map(it => {
-      const el = document.createElement('div');
-      el.className = 'glass lot';
-      el.innerHTML = `<div class="thumb" style="background-image:url('${esc(it.image)}')"></div>
-        <div><h4>${esc(it.collection)} <span class="num">#${esc(it.number)}</span></h4>
-        <div class="meta"><span class="tag">${esc(it.market_label || '—')}</span><span class="tag">−${(+it.floor_discount || 0).toFixed(1)}% от флора</span></div>
-        <div class="prices"><div>Цена<b>${ton(it.price)}</b></div><div>Профит (2%)<b style="color:var(--green)">${(+it.profit_ton || 0).toFixed(2)} TON</b></div></div></div>
-        <div class="btns-sm"><button class="open">⚡ Открыть</button><button class="cart-add">✕ Убрать</button></div>`;
-      el.querySelector('.open').onclick = () => window.open(it.url, '_blank', 'noopener');
-      el.querySelector('.cart-add').onclick = () => { cart = cart.filter(x => x.id !== it.id); saveCart(); renderCart(); };
-      return el;
-    }));
-    const total = cart.reduce((s, x) => s + (+x.price || 0), 0);
-    const profit = cart.reduce((s, x) => s + (+x.profit_ton || 0), 0);
-    $('cartTotal').textContent = ton(total);
-    $('cartUsd').textContent = '$' + (total * rate.ton_usd).toFixed(2);
-    $('cartByn').textContent = (total * rate.ton_byn).toFixed(2) + ' BYN';
-    $('cartProfit').textContent = (profit >= 0 ? '+' : '') + profit.toFixed(2) + ' TON';
-  }
-  $('clearCartBtn').addEventListener('click', () => { cart = []; saveCart(); renderCart(); $('autobuyOut').style.display = 'none'; toast('Корзина очищена'); });
-  $('autobuyBtn').addEventListener('click', async () => {
-    const out = $('autobuyOut'); out.style.display = 'block';
-    if (!cart.length) { out.textContent = 'Корзина пуста — JSON-задача не сформирована.'; return; }
-    try { const d = await (await fetch('/api/autobuy')).json(); out.textContent = d.json_template; } catch (e) { out.textContent = 'Ошибка сервера'; }
-  });
 
-  /* -------- лента -------- */
+  /* ---------- лента ---------- */
   function card(it, i) {
     const el = document.createElement('div');
     el.className = 'glass lot' + (it.floor_discount >= 20 ? ' hot' : '');
@@ -504,7 +481,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
         <h4>${esc(it.collection)} <span class="num">#${esc(it.number)}</span></h4>
         <div class="meta">
           <span class="tag" style="color:${mc};background:${mc}1f;border:1px solid ${mc}55">${esc(it.market_label)}</span>
-          <span class="tag mono">🌈 Монохром ${it.monochrome_pct}%</span>
+          <span class="tag mono">🌈 ${it.monochrome_pct}%</span>
           <span class="tag">🎨 ${esc(it.model || '—')}</span>
           <span class="tag">🖼 ${esc(it.backdrop || '—')}</span>
           ${it.symbol ? `<span class="tag">🔣 ${esc(it.symbol)}</span>` : ''}
@@ -514,20 +491,24 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
           <div>Цена<b>${ton(it.price)}</b></div>
           <div>Флор<b>${ton(it.floor)}</b></div>
           <div>Ниже флора<b style="color:var(--green)">−${(+it.floor_discount).toFixed(1)}%</b></div>
-          <div>Рекоменд. цена<b style="color:var(--ton)">${ton(it.rec_price)}</b></div>
+          <div>Ресейл (−2%)<b style="color:var(--ton)">${ton(it.rec_price)}</b></div>
         </div>
       </div>
       <div class="right">
         <div class="profit ${p < 0 ? 'neg' : ''}">${p >= 0 ? '+' : ''}${p.toFixed(2)} TON
-          <small>$${(p * rate.ton_usd).toFixed(2)} / ${(p * rate.ton_byn).toFixed(2)} BYN</small></div>
-        <div class="btns-sm"><button class="open">⚡ Открыть</button><button class="cart-add">+ В корзину</button></div>
+          <small>$${(p * USD()).toFixed(2)} / ${(p * BYN()).toFixed(2)} BYN</small></div>
+        <div class="btns">
+          <button class="btn buy">⚡ Купить на сайте</button>
+          <button class="btn market">↗️ Перейти в маркет</button>
+        </div>
       </div>`;
-    el.querySelector('.open').onclick = () => window.open(it.url, '_blank', 'noopener');
-    el.querySelector('.cart-add').onclick = e => { addToCart(it); e.target.textContent = '✓'; setTimeout(() => e.target.textContent = '+ В корзину', 900); };
+    el.querySelector('.buy').onclick = e => buyLot(it, e.target);
+    el.querySelector('.market').onclick = () => window.open(it.url, '_blank', 'noopener');
     return el;
   }
   function renderFeed(d) {
     if (d.rates) paintRates(d.rates);
+    if (d.balance_ton !== undefined) balance.balance_ton = d.balance_ton;
     const items = d.items || [];
     $('sTotal').textContent = d.total || 0;
     $('sBest').textContent = items.length ? '−' + Math.max(...items.map(i => i.floor_discount)).toFixed(1) + '%' : '—';
@@ -535,170 +516,111 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     const feed = $('feed'), empty = $('empty');
     if (d.status === 'waiting_tokens' || (!items.length && d.status !== 'ok')) {
       feed.replaceChildren(); empty.style.display = 'block';
-      $('emptyTitle').textContent = d.message || 'Ожидание токенов авторизации маркетов в scanner.py — демо-фейки отключены';
-      $('emptySub').textContent = 'Впишите PORTALS_INIT_DATA / TONNEL_INIT_DATA / MRKT_INIT_DATA в scanner.py — лента оживёт сама.';
+      $('emptyTitle').textContent = d.message || 'Ожидание подключения маркетов в scanner.py';
       return;
     }
     empty.style.display = items.length ? 'none' : 'block';
-    if (!items.length) $('emptyTitle').textContent = 'Под фильтры ничего не подошло';
+    if (!items.length) { $('emptyTitle').textContent = 'Под фильтры ничего не подошло'; $('emptySub').textContent = 'Ослабьте фильтры слева.'; }
     feed.replaceChildren(...items.map(card));
     if (items.length && items[0].id !== lastTopId) lastTopId = items[0].id;
   }
   let busy = false;
   async function tick() {
     if (busy) return; busy = true;
-    try { renderFeed(await (await fetch('/api/feed?' + new URLSearchParams(params()), { cache: 'no-store' })).json()); }
+    try { renderFeed(await (await fetch(Q('/api/feed?' + new URLSearchParams(params())), { cache: 'no-store' })).json()); }
     catch (e) { $('sTotal').textContent = '!'; }
     finally { busy = false; }
   }
 
-  /* -------- калькулятор -------- */
-  function playLottie(url) {
-    const box = $('lottieBox');
-    box.innerHTML = '';
-    if (lottieAnim) { try { lottieAnim.destroy(); } catch (e) {} lottieAnim = null; }
-    if (!url || !window.lottie) { setImage(); return; }
+  /* ---------- инвентарь ---------- */
+  function invCard(it) {
+    const el = document.createElement('div');
+    el.className = 'glass lot';
+    const owned = it.status === 'owned';
+    el.innerHTML = `
+      <div class="thumb" style="background-image:url('${esc(it.image)}')"></div>
+      <div>
+        <h4>${esc(it.collection)} <span class="num">#${esc(it.number)}</span></h4>
+        <div class="meta">
+          <span class="tag">${esc(it.market_label || '—')}</span>
+          <span class="tag ${owned ? 'ok' : 'beauty'}">${esc(it.status)}</span>
+          ${it.model ? `<span class="tag">🎨 ${esc(it.model)}</span>` : ''}
+          ${it.backdrop ? `<span class="tag">🖼 ${esc(it.backdrop)}</span>` : ''}
+        </div>
+        <div class="prices">
+          <div>Куплено за<b>${ton(it.buy_price)}</b></div>
+          <div>Ресейл (−2%)<b style="color:var(--ton)">${ton(it.rec_price)}</b></div>
+          <div>Профит<b style="color:var(--green)">${(+it.profit_ton).toFixed(2)} TON</b></div>
+        </div>
+        <div class="wd-form">
+          <input type="text" placeholder="@username получателя" data-wd-input>
+          <button class="btn wd" data-wd="${it.id}">📤 Вывести подарок (комиссия 0.6 TON)</button>
+        </div>
+      </div>
+      <div class="right"><button class="btn market" data-open>↗️ В маркет</button></div>`;
+    el.querySelector('[data-open]').onclick = () => window.open(it.url, '_blank', 'noopener');
+    const btn = el.querySelector('[data-wd]');
+    if (!owned) { btn.disabled = true; }
+    btn.onclick = async () => {
+      const to = el.querySelector('[data-wd-input]').value.trim();
+      if (!/^@[A-Za-z][A-Za-z0-9_]{3,31}$/.test(to)) { toast('Введите @username (например @duck_trader)', 'err'); return; }
+      if (balance.balance_ton < WD_FEE) { toast(`Нужно ${WD_FEE} TON на балансе для комиссии`, 'err'); openTopup(); return; }
+      btn.disabled = true;
+      try {
+        const d = await (await fetch(Q('/api/withdraw'), { method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ inventory_id: it.id, to }) })).json();
+        if (!d.ok) { toast(d.error || 'Ошибка', 'err'); btn.disabled = false; return; }
+        paintBalance(d); toast(d.status, 'ok'); loadInventory();
+      } catch (e) { toast('Сервер недоступен', 'err'); btn.disabled = false; }
+    };
+    return el;
+  }
+  async function loadInventory() {
     try {
-      lottieAnim = window.lottie.loadAnimation({
-        container: box, renderer: 'svg', loop: true, autoplay: true, path: url,
-        rendererSettings: { progressiveLoad: true, preserveAspectRatio: 'xMidYMid meet' }
-      });
-      lottieAnim.addEventListener('data_failed', setImage);
-      lottieAnim.addEventListener('error', setImage);
-    } catch (e) { setImage(); }
+      const d = await (await fetch(Q('/api/inventory'), { cache: 'no-store' })).json();
+      inventory = d.items || [];
+      paintBalance(d);
+      $('invCount').textContent = inventory.length;
+      $('invEmpty').style.display = inventory.length ? 'none' : 'block';
+      $('invList').replaceChildren(...inventory.map(invCard));
+    } catch (e) {}
   }
-  function setImage() {
-    const img = $('pvImg');
-    if (!$('lottieBox').innerHTML) {
-      img.style.backgroundImage = current && current.image ? `url('${current.image}')` : 'none';
-      img.classList.add('floaty', 'shine');
-    }
-  }
-  function paintCalc(d) {
-    current = d;
-    const img = $('pvImg');
-    img.style.backgroundImage = 'none'; img.classList.remove('floaty', 'shine');
-    $('pvName').textContent = d.name || '—';
-    $('pvNote').textContent = d.note || d.url || '';
-    $('spModel').textContent = d.model || '—';
-    $('spBack').textContent = d.backdrop || '—';
-    $('spSym').textContent = d.symbol || '—';
-    $('spNum').textContent = d.number || '—';
-    $('spModelR').textContent = 'нет данных';
-    $('spBackR').textContent = 'нет данных';
-    $('spSymR').textContent = 'нет данных';
-    $('spMono').textContent = d.monochrome_pct + '%';
-    $('pvMonoBar').style.width = d.monochrome_pct + '%';
-    $('spLiq').textContent = '—';
-    $('spLiqNote').textContent = 'Для живого флора и истории продаж вставьте токены маркетов в scanner.py';
-    $('spRec').textContent = '—';
-    $('spRecNote').textContent = 'Для живого флора и истории продаж вставьте токены маркетов в scanner.py';
-    $('cBuy').textContent = ton(d.price);
-    targetPrice = d.price;
-    calcSpread(0, true);
-    setImage();
-    playLottie(d.lottie);
-    addHistory(d);
-  }
-  function calcSpread(pct, keep) {
-    const d = current || { price: 0 };
-    const buy = +d.price || 0;
-    if (!keep || !targetPrice) targetPrice = buy * (1 + pct / 100);
-    const target = targetPrice;
-    const fee = target * FEE;
-    const profit = target - fee - buy;
-    $('cTarget').textContent = ton(target);
-    $('cFee').textContent = '−' + ton(fee);
-    $('cProfit').textContent = (profit >= 0 ? '+' : '') + profit.toFixed(2) + ' TON';
-    $('cProfit').style.color = profit >= 0 ? '#2EE59D' : '#FF5C7A';
-    $('cUsd').textContent = (profit >= 0 ? '+' : '') + '$' + (profit * rate.ton_usd).toFixed(2);
-    $('cByn').textContent = (profit >= 0 ? '+' : '') + (profit * rate.ton_byn).toFixed(2) + ' BYN';
-  }
-  document.querySelectorAll('.spread-btns button').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('.spread-btns button').forEach(x => x.classList.toggle('on', x === b));
-    const d = current || { price: 0 };
-    targetPrice = (+d.price || 0) * (1 + (+b.dataset.spread) / 100);
-    calcSpread(+b.dataset.spread);
-  }));
-  $('buyPrice').addEventListener('input', () => {
-    if (current) { current.price = parseFloat($('buyPrice').value) || 0; targetPrice = current.price; calcSpread(0); }
-  });
 
-  async function doCalc(urlOverride) {
-    const url = urlOverride || $('giftUrl').value.trim();
-    if (!url) { $('pvName').textContent = 'Вставьте ссылку на подарок'; return; }
-    $('giftUrl').value = url;
-    const price = $('buyPrice').value || 0;
-    $('calcBtn').textContent = '…';
+  /* ---------- корзина / заказы ---------- */
+  async function loadCart() {
     try {
-      const r = await fetch('/api/calc?' + new URLSearchParams({ url, price }), { cache: 'no-store' });
-      const d = await r.json();
-      if (!d.ok) { $('pvName').textContent = 'Ошибка'; $('pvNote').textContent = d.error || 'Не удалось разобрать ссылку'; return; }
-      paintCalc(d);
-    } catch (e) { $('pvName').textContent = 'Сервер недоступен'; }
-    finally { $('calcBtn').textContent = 'Оценить подарок'; }
+      const d = await (await fetch(Q('/api/orders'), { cache: 'no-store' })).json();
+      orders = d.orders || [];
+      $('cartCount').textContent = orders.length;
+      $('cartEmpty').style.display = orders.length ? 'none' : 'block';
+      $('cartList').replaceChildren(...orders.map(o => {
+        const el = document.createElement('div');
+        el.className = 'glass lot';
+        el.innerHTML = `<div class="thumb"></div>
+          <div><h4>Задача автопокупки <span class="num">#${esc(o.id)}</span></h4>
+          <div class="meta"><span class="tag ok">${esc(o.status)}</span><span class="tag">Lot ${esc(o.lot_id)}</span></div>
+          <div class="prices"><div>Лимит<b>${ton(o.max_price)}</b></div><div>Цель продажи<b style="color:var(--ton)">${ton(o.target_price)}</b></div></div></div>
+          <div class="right"><button class="btn market">↗️ В маркет</button></div>`;
+        el.querySelector('.btn').onclick = () => o.url && window.open(o.url, '_blank', 'noopener');
+        return el;
+      }));
+      const total = orders.reduce((s, o) => s + (+o.max_price || 0), 0);
+      const profit = orders.reduce((s, o) => s + ((+o.target_price || 0) * (1 - FEE) - (+o.max_price || 0)), 0);
+      $('cartTotal').textContent = ton(total);
+      $('cartUsdByn').textContent = '$' + (total * USD()).toFixed(2) + ' / ' + (total * BYN()).toFixed(2) + ' BYN';
+      $('cartProfit').textContent = (profit >= 0 ? '+' : '') + profit.toFixed(2) + ' TON';
+    } catch (e) {}
   }
-  $('calcBtn').addEventListener('click', () => doCalc());
-  $('giftUrl').addEventListener('keydown', e => { if (e.key === 'Enter') doCalc(); });
-
-  /* -------- снайп / JSON -------- */
-  function buildTask(d) {
-    return JSON.stringify({
-      version: 1, type: 'autobuy_task', created_at: Math.floor(Date.now() / 1000),
-      source: 'gift_radar_pro', fee_rate: FEE,
-      target: {
-        url: d.url, collection: d.collection || '', number: d.number || '',
-        model: d.model || '', backdrop: d.backdrop || '', symbol: d.symbol || '',
-        monochrome_pct: d.monochrome_pct || 0
-      },
-      buy: { max_price: +d.price || 0 },
-      sell: { target_price: +targetPrice.toFixed(2), min_profit_pct: 5 },
-      guards: { max_floor_deviation: 0.05, require_ton_balance: true }
-    }, null, 2);
-  }
-  $('snipeBtn').addEventListener('click', () => {
-    if (!current) { toast('Сначала оцените подарок'); return; }
-    addToCart({ id: 'calc:' + (current.url || current.number), collection: current.collection || current.name,
-      number: current.number, price: current.price,
-      rec_price: +targetPrice.toFixed(2), market_label: 'Cal', market: '', url: current.url,
-      image: current.image, profit_ton: targetPrice * (1 - FEE) - current.price, floor_discount: 0 });
-  });
-  $('copyBtn').addEventListener('click', async () => {
-    if (!current) { toast('Сначала оцените подарок'); return; }
-    const txt = buildTask(current);
-    $('jsonOut').style.display = 'block'; $('jsonOut').textContent = txt;
-    try { await navigator.clipboard.writeText(txt); toast('JSON-задача скопирована'); } catch (e) { toast('JSON сформирован ниже'); }
+  $('ordersBtn').addEventListener('click', () => {
+    const out = $('ordersOut'); out.style.display = 'block';
+    out.textContent = JSON.stringify(orders, null, 2);
   });
 
-  /* -------- история -------- */
-  function addHistory(d) {
-    history = history.filter(h => h.url !== d.url);
-    history.unshift({ url: d.url, name: d.name, image: d.image, number: d.number,
-      model: d.model, backdrop: d.backdrop, mono: d.monochrome_pct, price: d.price,
-      at: Date.now() });
-    history = history.slice(0, 10);
-    try { localStorage.setItem('gr_history', JSON.stringify(history)); } catch (e) {}
-    renderHistory();
-  }
-  function renderHistory() {
-    const box = $('histList');
-    $('histEmpty').style.display = history.length ? 'none' : 'block';
-    box.replaceChildren(...history.map(h => {
-      const el = document.createElement('div');
-      el.className = 'hist-item';
-      el.innerHTML = `<img src="${esc(h.image)}" alt=""><div><b>${esc(h.name || ('#' + h.number))}</b>
-        <div class="muted" style="font-size:11px">${esc(h.model || '—')} · ${esc(h.backdrop || '—')} · монохром ${h.mono}%</div></div>
-        <span>${new Date(h.at).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>`;
-      el.onclick = () => { $('giftUrl').value = h.url; doCalc(h.url); };
-      return el;
-    }));
-  }
-
-  /* -------- старт -------- */
-  saveCart(); renderHistory(); renderCart();
-  loadRates(false); initTon(); tick();
+  /* ---------- старт ---------- */
+  loadRates(false); loadBalance(); loadInventory(); loadCart(); tick();
   setInterval(tick, 3000);
-  setInterval(() => loadRates(true), 60000);
+  setInterval(() => loadRates(true), 30000);
+  setInterval(loadBalance, 15000);
 })();
 </script>
 </body>
