@@ -1,4 +1,15 @@
-"""Gift Radar Pro — aiohttp backend: радар, внутренний баланс, инвентарь, выводы."""
+"""
+Gift Radar Pro — backend (aiohttp + стандартная библиотека Python).
+
+Функции:
+  * Жёсткий платный вход (paywall): мастер-ключи, оплата в TON по живому курсу.
+  * Живые курсы: TON/USD (OKX -> Bybit), USD/BYN (НБРБ), USD/RUB (ЦБ РФ).
+  * Внутренний баланс, пополнение (TON Connect / прямой перевод с Memo).
+  * Покупка лотов на сайте, инвентарь, вывод подарка за 0.6 TON.
+  * Лента реальных лотов Portals (scanner.py).
+
+Сторонние зависимости: только aiohttp.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +17,12 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import aiohttp
@@ -18,305 +30,459 @@ from aiohttp import web
 
 import scanner as sc
 
-BASE_DIR = Path(__file__).parent
-DB_PATH = BASE_DIR / "gift_radar.db"
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "templates"
+DB_PATH = Path(os.environ.get("DB_PATH") or (BASE_DIR / "gift_radar.db"))
 
-# ----------------------------- настройки проекта ----------------------------- #
-
-DEPOSIT_WALLET: str = os.environ.get(
-    "DEPOSIT_WALLET", "UQD3U-lkGDlbRCGM2C6fPnlolt2EnQdcr5Uc6p94LWj39qEX"
-).strip()
-WITHDRAW_FEE_TON: float = 0.6
-MARKET_FEE: float = sc.MARKET_FEE          # 2 %
-RATES_TTL = 30
-
-# ------------------------------ платный доступ ------------------------------ #
+# =========================== настройки проекта ============================= #
 
 OWNER_WALLET: str = os.environ.get(
     "OWNER_WALLET", "UQBUSnHH_yILiNFJOBo6lhWZdOxYyM8ABxH6O8IF74_cZQud"
 ).strip()
+
+DEPOSIT_WALLET: str = os.environ.get(
+    "DEPOSIT_WALLET", "UQD3U-lkGDlbRCGM2C6fPnlolt2EnQdcr5Uc6p94LWj39qEX"
+).strip()
+
 ACCESS_PRICE_USD: float = 12.99
 ACCESS_DAYS: int = 30
-MASTER_KEYS = ["GIFT-OWNER-777", "FRIEND-FREE-2026"]
-ACCESS_GRANT_TTL = 36500 * 86400   # «вечный» доступ по VIP-ключу
+MASTER_KEYS: Tuple[str, ...] = ("GIFT-OWNER-777", "FRIEND-FREE-2026")
 
-UA = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"}
+WITHDRAW_FEE_TON: float = 0.6
+MARKET_FEE: float = sc.MARKET_FEE          # 2 %
+RATES_TTL: int = 30
+KEY_GRANT_TTL: int = ACCESS_DAYS * 86400
 
-# ------------------------------ SQLite -------------------------------------- #
+UA_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+}
+
+
+def log(msg: str) -> None:
+    print(f"[gift-radar] {msg}", flush=True)
+
+
+# ================================ SQLite =================================== #
 
 _db_lock = threading.Lock()
 
 
 def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
 def init_db() -> None:
-    with _db_lock, db() as c:
-        c.executescript("""
-        CREATE TABLE IF NOT EXISTS users(
-            user_id TEXT PRIMARY KEY,
-            balance REAL NOT NULL DEFAULT 0,
-            created_at INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS inventory(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL,
-            lot_id TEXT NOT NULL,
-            collection TEXT, number TEXT, model TEXT, backdrop TEXT, symbol TEXT,
-            market TEXT, market_label TEXT, url TEXT, image TEXT,
-            buy_price REAL, rec_price REAL, profit_ton REAL,
-            status TEXT DEFAULT 'owned', withdraw_to TEXT,
-            created_at INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS orders(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL, lot_id TEXT NOT NULL, url TEXT,
-            max_price REAL, target_price REAL, status TEXT DEFAULT 'queued',
-            created_at INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS withdrawals(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL, inventory_id INTEGER NOT NULL,
-            to_username TEXT, fee REAL, status TEXT DEFAULT 'pending',
-            created_at INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS payments(
-            user_id TEXT NOT NULL, memo TEXT PRIMARY KEY,
-            amount REAL, tx_hash TEXT, created_at INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS access(
-            user_id TEXT PRIMARY KEY, paid_until INTEGER NOT NULL,
-            plan TEXT, memo TEXT, created_at INTEGER NOT NULL
-        );
-        """)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _db_lock, db() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users(
+                user_id    TEXT PRIMARY KEY,
+                balance    REAL NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS access(
+                user_id    TEXT PRIMARY KEY,
+                paid_until INTEGER NOT NULL,
+                plan       TEXT NOT NULL DEFAULT 'paid',
+                key_used   TEXT,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS inventory(
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      TEXT NOT NULL,
+                lot_id       TEXT NOT NULL,
+                collection   TEXT,
+                number       TEXT,
+                model        TEXT,
+                backdrop     TEXT,
+                symbol       TEXT,
+                url          TEXT,
+                image        TEXT,
+                buy_price    REAL,
+                rec_price    REAL,
+                profit_ton   REAL,
+                status       TEXT NOT NULL DEFAULT 'owned',
+                withdraw_to  TEXT,
+                created_at   INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS orders(
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      TEXT NOT NULL,
+                lot_id       TEXT NOT NULL,
+                url          TEXT,
+                max_price    REAL,
+                target_price REAL,
+                status       TEXT NOT NULL DEFAULT 'queued',
+                created_at   INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS withdrawals(
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       TEXT NOT NULL,
+                inventory_id  INTEGER NOT NULL,
+                to_username   TEXT,
+                fee           REAL,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                created_at    INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS payments(
+                memo       TEXT PRIMARY KEY,
+                user_id    TEXT NOT NULL,
+                amount     REAL,
+                kind       TEXT,
+                tx_hash    TEXT,
+                created_at INTEGER NOT NULL
+            );
+            """
+        )
+    log(f"SQLite ready: {DB_PATH}")
+
+
+# =============================== утилиты =================================== #
+
+def json_ok(data: Any, status: int = 200) -> web.Response:
+    return web.json_response(data, status=status,
+                             dumps=lambda obj: json.dumps(obj, ensure_ascii=False))
+
+
+def _norm_user_id(raw: Optional[str]) -> str:
+    uid = re.sub(r"[^A-Za-z0-9_\-]", "", (raw or "").strip())[:48]
+    return uid or "guest"
+
+
+def user_id_of(request: web.Request) -> str:
+    uid = _norm_user_id(request.query.get("user_id") or request.headers.get("X-User-Id"))
+    ensure_user(uid)
+    return uid
 
 
 def ensure_user(user_id: str) -> None:
-    with _db_lock, db() as c:
-        c.execute("INSERT OR IGNORE INTO users(user_id, balance, created_at) VALUES(?,0,?)",
-                  (user_id, int(time.time())))
+    with _db_lock, db() as conn:
+        conn.execute("INSERT OR IGNORE INTO users(user_id, balance, created_at) VALUES(?,0,?)",
+                     (user_id, int(time.time())))
 
 
 def get_balance(user_id: str) -> float:
-    with _db_lock, db() as c:
-        row = c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()
+    with _db_lock, db() as conn:
+        row = conn.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()
     return round(float(row["balance"]), 6) if row else 0.0
 
 
 def add_balance(user_id: str, delta: float) -> float:
     ensure_user(user_id)
-    with _db_lock, db() as c:
-        c.execute("UPDATE users SET balance=ROUND(balance+?,6) WHERE user_id=?", (delta, user_id))
-        row = c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()
-    return round(float(row["balance"]), 6)
+    with _db_lock, db() as conn:
+        conn.execute("UPDATE users SET balance=ROUND(balance+?,6) WHERE user_id=?", (delta, user_id))
+        row = conn.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()
+    return round(float(row["balance"]), 6) if row else 0.0
 
 
-# ------------------------------ курсы --------------------------------------- #
-#  TON/USD — KuCoin, USD/BYN — НБРБ (Cur_OfficialRate / 10000), USD/RUB — CBR.
+def _to_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+# ============================= живые курсы ================================= #
+#  TON/USD: OKX (data[0].last) -> Bybit.
+#  USD/BYN: НБРБ (Cur_OfficialRate / Cur_Scale).
+#  USD/RUB: ЦБ РФ (Valute.USD.Value).
 #  Кэш 30 с, при сбое сети — последнее успешное значение.
-# ---------------------------------------------------------------------------- #
+# =========================================================================== #
 
 RATES: Dict[str, Any] = {
-    "data": {"ton_usd": None, "usd_byn": None, "usd_rub": None, "ton_byn": None},
+    "ton_usd": None,
+    "usd_byn": None,
+    "usd_rub": None,
+    "ton_byn": None,
+    "sources": {},
     "updated_at": 0.0,
-    "source": {},
 }
 
 
-async def _kucoin_ton_usd(s: aiohttp.ClientSession) -> Optional[float]:
+async def _okx_ton_usd(session: aiohttp.ClientSession) -> Optional[float]:
+    url = "https://www.okx.com/api/v5/market/ticker?instId=TON-USDT"
     try:
-        async with s.get("https://api.kucoin.com/api/v1/market/stats?symbol=TON-USDT",
-                         headers=UA, timeout=aiohttp.ClientTimeout(total=8)) as r:
-            d = await r.json(content_type=None)
-            last = ((d or {}).get("data") or {}).get("last")
-            return float(last) if last else None
-    except Exception:
+        async with session.get(url, headers=UA_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json(content_type=None)
+        rows = (data or {}).get("data") or []
+        if rows:
+            last = _to_float(rows[0].get("last"))
+            if last and last > 0:
+                return last
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
-
-
-async def _nbrb_usd_byn(s: aiohttp.ClientSession) -> Optional[float]:
-    try:
-        async with s.get("https://api.nbrb.by/exrates/rates/USD?parammode=2",
-                         headers=UA, timeout=aiohttp.ClientTimeout(total=8)) as r:
-            d = await r.json(content_type=None)
-            rate = d.get("Cur_OfficialRate")
-            if rate:
-                scale = d.get("Cur_Scale") or 1
-                return round(float(rate) / float(scale), 6)
-    except Exception:
-        pass
-    try:  # резервный официальный фид НБРБ
-        async with s.get("https://www.nbrb.by/api/exrates/rates/145",
-                         headers=UA, timeout=aiohttp.ClientTimeout(total=8)) as r:
-            d = await r.json(content_type=None)
-            rate = d.get("Cur_OfficialRate")
-            if rate:
-                return round(float(rate) / float(d.get("Cur_Scale") or 1), 6)
-    except Exception:
-        pass
     return None
 
 
-async def _cbr_usd_rub(s: aiohttp.ClientSession) -> Optional[float]:
+async def _bybit_ton_usd(session: aiohttp.ClientSession) -> Optional[float]:
+    url = "https://api.bybit.com/v5/market/tickers?category=spot&symbol=TONUSDT"
     try:
-        async with s.get("https://www.cbr-xml-daily.ru/daily_json.js",
-                         headers=UA, timeout=aiohttp.ClientTimeout(total=8)) as r:
-            d = await r.json(content_type=None)
-            v = (((d or {}).get("Valute") or {}).get("USD") or {}).get("Value")
-            return float(v) if v else None
-    except Exception:
+        async with session.get(url, headers=UA_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json(content_type=None)
+        rows = ((data or {}).get("result") or {}).get("list") or []
+        if rows:
+            last = _to_float(rows[0].get("lastPrice"))
+            if last and last > 0:
+                return last
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
+    return None
+
+
+async def _nbrb_usd_byn(session: aiohttp.ClientSession) -> Optional[float]:
+    for url in ("https://api.nbrb.by/exrates/rates/USD?parammode=2",
+                "https://www.nbrb.by/api/exrates/rates/145"):
+        try:
+            async with session.get(url, headers=UA_HEADERS,
+                                   timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json(content_type=None)
+            rate = _to_float((data or {}).get("Cur_OfficialRate"))
+            scale = _to_float((data or {}).get("Cur_Scale"), 1.0) or 1.0
+            if rate and rate > 0:
+                return round(rate / scale, 6)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            continue
+    return None
+
+
+async def _cbr_usd_rub(session: aiohttp.ClientSession) -> Optional[float]:
+    try:
+        async with session.get("https://www.cbr-xml-daily.ru/daily_json.js",
+                               headers=UA_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json(content_type=None)
+        value = _to_float((((data or {}).get("Valute") or {}).get("USD") or {}).get("Value"))
+        if value and value > 0:
+            return value
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return None
+    return None
 
 
 async def refresh_rates(force: bool = False) -> Dict[str, Any]:
     now = time.time()
     if not force and RATES["updated_at"] and now - RATES["updated_at"] < RATES_TTL:
         return RATES
-    async with aiohttp.ClientSession() as s:
-        ton_usd, usd_byn, usd_rub = await asyncio.gather(
-            _kucoin_ton_usd(s), _nbrb_usd_byn(s), _cbr_usd_rub(s)
-        )
-    d = RATES["data"]
-    src = RATES["source"]
-    if ton_usd:
-        d["ton_usd"], src["ton_usd"] = ton_usd, "kucoin"
-    if usd_byn:
-        d["usd_byn"], src["usd_byn"] = usd_byn, "nbrb.by"
-    if usd_rub:
-        d["usd_rub"], src["usd_rub"] = usd_rub, "cbr-xml-daily.ru"
-    if d["ton_usd"] and d["usd_byn"]:
-        d["ton_byn"] = round(d["ton_usd"] * d["usd_byn"], 4)
-        src["ton_byn"] = "рассчитано"
-    RATES["updated_at"] = now
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            ton_usd, usd_byn, usd_rub = await asyncio.gather(
+                _okx_ton_usd(session), _nbrb_usd_byn(session), _cbr_usd_rub(session)
+            )
+            sources = dict(RATES["sources"])
+            if ton_usd:
+                sources["ton_usd"] = "okx.com"
+            else:
+                ton_usd = await _bybit_ton_usd(session)
+                if ton_usd:
+                    sources["ton_usd"] = "bybit.com"
+
+        if ton_usd:
+            RATES["ton_usd"] = ton_usd
+        if usd_byn:
+            RATES["usd_byn"] = usd_byn
+            sources["usd_byn"] = "nbrb.by"
+        if usd_rub:
+            RATES["usd_rub"] = usd_rub
+            sources["usd_rub"] = "cbr-xml-daily.ru"
+        if RATES["ton_usd"] and RATES["usd_byn"]:
+            RATES["ton_byn"] = round(RATES["ton_usd"] * RATES["usd_byn"], 4)
+            sources["ton_byn"] = "рассчитано"
+
+        RATES["sources"] = sources
+        if ton_usd or usd_byn or usd_rub:
+            RATES["updated_at"] = now
+    except Exception as exc:              # сеть недоступна — оставляем прошлые значения
+        log(f"rates error: {type(exc).__name__}")
     return RATES
 
 
 def ton_usd() -> float:
-    return float(RATES["data"]["ton_usd"] or 0)
+    return float(RATES["ton_usd"] or 0)
 
 
 def ton_byn() -> float:
-    return float(RATES["data"]["ton_byn"] or 0)
+    return float(RATES["ton_byn"] or 0)
 
 
-# ------------------------------ утилиты ------------------------------------- #
-
-def json_ok(data, status: int = 200) -> web.Response:
-    return web.json_response(data, status=status, dumps=lambda o: json.dumps(o, ensure_ascii=False))
-
-
-def user_id_of(request: web.Request) -> str:
-    uid = (request.query.get("user_id") or request.headers.get("X-User-Id") or "").strip()
-    uid = re.sub(r"[^A-Za-z0-9_\-]", "", uid)[:48]
-    if not uid:
-        uid = "guest"
-    ensure_user(uid)
-    return uid
+def rates_payload() -> Dict[str, Any]:
+    return {
+        "ton_usd": round(RATES["ton_usd"], 4) if RATES["ton_usd"] else None,
+        "usd_byn": round(RATES["usd_byn"], 4) if RATES["usd_byn"] else None,
+        "ton_byn": round(RATES["ton_byn"], 4) if RATES["ton_byn"] else None,
+        "usd_rub": round(RATES["usd_rub"], 4) if RATES["usd_rub"] else None,
+        "sources": RATES["sources"],
+        "updated_at": int(RATES["updated_at"] or 0),
+        "ttl": RATES_TTL,
+    }
 
 
-def _num(v, default=None):
-    try:
-        return float(v) if v not in (None, "") else default
-    except (TypeError, ValueError):
-        return default
-
-
-def balance_payload(user_id: str) -> Dict[str, Any]:
-    bal = get_balance(user_id)
-    return {"user_id": user_id, "balance_ton": bal,
-            "balance_usd": round(bal * ton_usd(), 2),
-            "balance_byn": round(bal * ton_byn(), 2),
-            "usd_rate": ton_usd(), "byn_rate": ton_byn(),
-            "deposit_wallet": DEPOSIT_WALLET, "withdraw_fee": WITHDRAW_FEE_TON}
-
-
-def make_memo(user_id: str) -> str:
-    return f"GR-{user_id[-10:].upper()}-{int(time.time()) % 100000}"
-
-
-# ------------------------------ страницы ------------------------------------ #
-
-async def index(request: web.Request) -> web.Response:
-    return web.FileResponse(BASE_DIR / "templates" / "index.html")
-
-
-# ------------------------------ API: курсы ---------------------------------- #
-
-async def api_rates(request: web.Request) -> web.Response:
-    try:
-        r = await refresh_rates(force=request.query.get("refresh") == "1")
-    except Exception:
-        r = RATES
-    return json_ok({"rates": r["data"], "source": r["source"],
-                    "updated_at": int(r["updated_at"] or 0), "ttl": RATES_TTL})
-
-
-# ------------------------------ доступ / paywall ---------------------------- #
-
-def _ton_payment_found(events: List[dict], memo: str, wallet: str) -> float:
-    """Сумма TON (в TON) по входящим переводам с указанным Memo."""
-    total_nano = 0
-    for ev in events or []:
-        if ev.get("in_progress"):
-            continue
-        for act in (ev.get("actions") or []):
-            status = (act.get("status") or "").lower()
-            if status not in ("ok", "success", ""):
-                continue
-            tt = act.get("TonTransfer")
-            if not isinstance(tt, dict):
-                continue
-            if (tt.get("message") or tt.get("comment") or "").strip().upper() != memo.upper():
-                continue
-            recipient = ((tt.get("recipient") or {}).get("address") or "")
-            if recipient and recipient != wallet:
-                continue
-            try:
-                total_nano += float(tt.get("amount") or 0)
-            except (TypeError, ValueError):
-                pass
-    return round(total_nano / 1e9, 6)
-
-
-async def _fetch_events(wallet: str, limit: int = 20) -> List[dict]:
-    url = f"https://tonapi.io/v2/accounts/{quote(wallet, safe='')}/events?limit={limit}"
-    async with aiohttp.ClientSession() as s:
-        async with s.get(url, headers=UA, timeout=aiohttp.ClientTimeout(total=12)) as r:
-            data = await r.json(content_type=None)
-    return list((data or {}).get("events") or [])
-
+# ============================ платный доступ =============================== #
 
 def access_until(user_id: str) -> int:
-    with _db_lock, db() as c:
-        row = c.execute("SELECT paid_until FROM access WHERE user_id=?", (user_id,)).fetchone()
+    with _db_lock, db() as conn:
+        row = conn.execute("SELECT paid_until FROM access WHERE user_id=?", (user_id,)).fetchone()
     return int(row["paid_until"]) if row else 0
 
 
-def access_state(user_id: str) -> Dict[str, Any]:
-    until = access_until(user_id)
-    active = until > int(time.time())
-    return {"active": active, "paid_until": until,
-            "days_left": max(0, (until - int(time.time())) // 86400) if active else 0,
-            "price_usd": ACCESS_PRICE_USD, "price_ton": round(ACCESS_PRICE_USD / ton_usd(), 2) if ton_usd() else 0,
-            "owner_wallet": OWNER_WALLET, "access_days": ACCESS_DAYS}
+def access_plan(user_id: str) -> str:
+    with _db_lock, db() as conn:
+        row = conn.execute("SELECT plan FROM access WHERE user_id=?", (user_id,)).fetchone()
+    return str(row["plan"]) if row else ""
 
 
-def grant_access(user_id: str, seconds: int, plan: str, memo: str = "") -> int:
-    until = int(time.time()) + seconds
-    with _db_lock, db() as c:
-        c.execute("""INSERT INTO access(user_id, paid_until, plan, memo, created_at) VALUES(?,?,?,?,?)
-                     ON CONFLICT(user_id) DO UPDATE SET paid_until=MAX(paid_until, excluded.paid_until),
-                     plan=excluded.plan, memo=excluded.memo""",
-                  (user_id, until, plan, memo, int(time.time())))
+def access_active(user_id: str) -> bool:
+    return access_until(user_id) > int(time.time())
+
+
+def grant_access(user_id: str, seconds: int, plan: str, key_used: str = "") -> int:
+    until = int(time.time()) + int(seconds)
+    with _db_lock, db() as conn:
+        conn.execute(
+            """INSERT INTO access(user_id, paid_until, plan, key_used, created_at)
+               VALUES(?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                 paid_until = MAX(access.paid_until, excluded.paid_until),
+                 plan       = excluded.plan,
+                 key_used   = excluded.key_used""",
+            (user_id, until, plan, key_used, int(time.time())),
+        )
     return until
 
 
-def access_memo(user_id: str) -> str:
-    return f"PAY-{int(time.time() * 1000) % 100000:05d}-{user_id[-4:].upper() or 'USER'}"
+def access_state(user_id: str) -> Dict[str, Any]:
+    now = int(time.time())
+    until = access_until(user_id)
+    active = until > now
+    price_ton = round(ACCESS_PRICE_USD / ton_usd(), 2) if ton_usd() else None
+    return {
+        "active": active,
+        "paid_until": until,
+        "days_left": max(0, (until - now + 86399) // 86400) if active else 0,
+        "plan": access_plan(user_id) if active else "",
+        "price_usd": ACCESS_PRICE_USD,
+        "price_ton": price_ton,
+        "access_days": ACCESS_DAYS,
+        "owner_wallet": OWNER_WALLET,
+        "deposit_wallet": DEPOSIT_WALLET,
+        "market_fee": MARKET_FEE,
+        "withdraw_fee": WITHDRAW_FEE_TON,
+    }
 
+
+def new_pay_memo(user_id: str) -> str:
+    return f"PAY-{secrets.randbelow(90000) + 10000}-{user_id[-4:].upper() or 'USER'}"
+
+
+def new_deposit_memo(user_id: str) -> str:
+    return f"GR-{secrets.token_hex(3).upper()}-{user_id[-5:].upper() or 'USER'}"
+
+
+async def fetch_ton_events(wallet: str, limit: int = 20) -> List[Dict[str, Any]]:
+    url = f"https://tonapi.io/v2/accounts/{quote(wallet, safe='')}/events?limit={int(limit)}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=UA_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=12)) as resp:
+            data = await resp.json(content_type=None)
+    return list((data or {}).get("events") or [])
+
+
+def find_ton_payment(events: List[Dict[str, Any]], memo: str,
+                     wallet: str) -> Tuple[float, str]:
+    """Ищет входящие TonTransfer с указанным Memo. Возвращает (сумма TON, хэш)."""
+    total_nano = 0
+    tx_hash = ""
+    target = memo.strip().upper()
+    for event in events or []:
+        if event.get("in_progress"):
+            continue
+        for action in (event.get("actions") or []):
+            status = str(action.get("status") or "").lower()
+            if status not in ("ok", "success", ""):
+                continue
+            transfer = action.get("TonTransfer")
+            if not isinstance(transfer, dict):
+                continue
+            comment = str(transfer.get("message") or transfer.get("comment") or "").strip()
+            if comment.upper() != target:
+                continue
+            recipient = str(((transfer.get("recipient") or {}).get("address")) or "")
+            if recipient and wallet and recipient != wallet:
+                continue
+            amount = _to_float(transfer.get("amount"), 0.0) or 0.0
+            if amount > 0:
+                total_nano += amount
+                tx_hash = tx_hash or str(event.get("event_id") or action.get("trace_id") or "")
+    return round(total_nano / 1e9, 6), tx_hash
+
+
+# ================================ страницы ================================= #
+
+async def index(request: web.Request) -> web.Response:
+    return web.FileResponse(TEMPLATES_DIR / "index.html")
+
+
+async def manifest(request: web.Request) -> web.Response:
+    """TON Connect manifest с динамическим роутом под текущий хост."""
+    scheme = request.headers.get("X-Forwarded-Proto", request.scheme or "http").split(",")[0].strip()
+    host = request.headers.get("X-Forwarded-Host") or request.host
+    base = f"{scheme}://{host}"
+    body = {
+        "url": base,
+        "name": "Gift Radar Pro",
+        "iconUrl": f"{base}/icon.svg",
+        "termsOfUseUrl": f"{base}/",
+        "privacyPolicyUrl": f"{base}/",
+    }
+    return web.json_response(body, headers={"Cache-Control": "no-store"})
+
+
+ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 120 120">
+<defs><linearGradient id="g" x1="20" y1="20" x2="100" y2="105" gradientUnits="userSpaceOnUse">
+<stop stop-color="#FFE066"/><stop offset="1" stop-color="#FFB300"/></linearGradient></defs>
+<rect width="120" height="120" rx="26" fill="#090B10"/>
+<path d="M30 66c-8 2-14 10-14 22 0 8 4 12 10 12h8V66z" fill="#F5A400"/>
+<path d="M38 52c0-16 12-28 27-28s27 12 27 28v30c0 12-10 20-25 20H58c-13 0-20-8-20-20V52z" fill="url(#g)"/>
+<path d="M66 30c-3-8 2-15 10-16 7-1 12 3 12 9 0 5-4 8-9 8h-2" stroke="#F5A400" stroke-width="6" stroke-linecap="round" fill="none"/>
+<circle cx="48" cy="56" r="15" fill="#0B1622" stroke="#22C3FF" stroke-width="3"/>
+<circle cx="72" cy="56" r="15" fill="#0B1622" stroke="#22C3FF" stroke-width="3"/>
+<circle cx="48" cy="56" r="2" fill="#7CFFCB"/><circle cx="72" cy="56" r="2" fill="#7CFFCB"/>
+</svg>"""
+
+
+async def icon(request: web.Request) -> web.Response:
+    return web.Response(text=ICON_SVG, content_type="image/svg+xml")
+
+
+# ============================== API: курсы ================================= #
+
+async def api_rates(request: web.Request) -> web.Response:
+    try:
+        await refresh_rates(force=request.query.get("refresh") == "1")
+    except Exception as exc:
+        log(f"api_rates: {type(exc).__name__}")
+    return json_ok({"ok": True, "rates": rates_payload()})
+
+
+# ============================ API: доступ ================================== #
 
 async def api_access(request: web.Request) -> web.Response:
     uid = user_id_of(request)
@@ -327,34 +493,7 @@ async def api_access(request: web.Request) -> web.Response:
 async def api_access_memo(request: web.Request) -> web.Response:
     uid = user_id_of(request)
     await refresh_rates()
-    st = access_state(uid)
-    return json_ok({"ok": True, "memo": access_memo(uid), **st})
-
-
-async def api_access_check(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
-    await refresh_rates()
-    memo = (request.query.get("memo") or "").strip().upper()
-    if not memo:
-        return json_ok({"ok": False, "error": "Нет Memo"}, 400)
-    need = round(ACCESS_PRICE_USD / ton_usd(), 2) if ton_usd() else 0.0
-    if need <= 0:
-        return json_ok({"ok": False, "error": "Курс TON временно недоступен, попробуйте позже"}, 503)
-    try:
-        events = await _fetch_events(OWNER_WALLET, limit=20)
-    except Exception as e:
-        return json_ok({"ok": False, "error": f"tonapi.io недоступен: {type(e).__name__}"}, 502)
-
-    paid = _ton_payment_found(events, memo, OWNER_WALLET)
-    if paid <= 0:
-        return json_ok({"ok": True, "opened": False, "need_ton": need,
-                        "message": "Перевод с этим Memo пока не найден в сети"}, 200)
-    if paid + 0.01 < need:
-        return json_ok({"ok": True, "opened": False, "need_ton": need, "paid_ton": paid,
-                        "message": f"Оплачено {paid} TON, требуется {need} TON"}, 200)
-
-    grant_access(uid, ACCESS_DAYS * 86400, "paid", memo)
-    return json_ok({"ok": True, "opened": True, "paid_ton": paid, **access_state(uid)})
+    return json_ok({"ok": True, "memo": new_pay_memo(uid), **access_state(uid)})
 
 
 async def api_access_unlock(request: web.Request) -> web.Response:
@@ -363,248 +502,284 @@ async def api_access_unlock(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
-    key = (body.get("key") or request.query.get("key") or "").strip().upper()
+    key = str(body.get("key") or request.query.get("key") or "").strip()
     if not key:
-        return json_ok({"ok": False, "error": "Введите VIP-ключ"}, 400)
-    if key in [k.upper() for k in MASTER_KEYS]:
-        grant_access(uid, ACCESS_GRANT_TTL, "vip", key)
-        return json_ok({"ok": True, "opened": True, "vip": True, **access_state(uid)})
-    return json_ok({"ok": False, "error": "Неверный ключ"}, 403)
+        return json_ok({"ok": False, "error": "Введите ключ"}, 400)
+    if key.upper() not in {k.upper() for k in MASTER_KEYS}:
+        return json_ok({"ok": False, "error": "Неверный ключ доступа"}, 403)
+    grant_access(uid, KEY_GRANT_TTL, "vip", key.upper())
+    return json_ok({"ok": True, "opened": True, "key": key.upper(),
+                    "paid_until": access_until(uid), **access_state(uid)})
+
+
+async def api_access_check(request: web.Request) -> web.Response:
+    uid = user_id_of(request)
+    await refresh_rates()
+    memo = str(request.query.get("memo") or "").strip().upper()
+    if not memo:
+        return json_ok({"ok": False, "error": "Нет Memo"}, 400)
+    if not ton_usd():
+        return json_ok({"ok": False, "error": "Курс TON временно недоступен"}, 503)
+
+    need = round(ACCESS_PRICE_USD / ton_usd(), 2)
+    with _db_lock, db() as conn:
+        paid_row = conn.execute("SELECT memo FROM payments WHERE memo=?", (memo,)).fetchone()
+    if paid_row:
+        grant_access(uid, KEY_GRANT_TTL, "paid", memo)
+        return json_ok({"ok": True, "opened": True, "key": memo,
+                        "paid_until": access_until(uid), **access_state(uid)})
+
+    try:
+        events = await fetch_ton_events(OWNER_WALLET, 20)
+    except Exception as exc:
+        return json_ok({"ok": False, "error": f"tonapi.io недоступен: {type(exc).__name__}"}, 502)
+
+    paid, tx_hash = find_ton_payment(events, memo, OWNER_WALLET)
+    if paid <= 0:
+        return json_ok({"ok": True, "opened": False, "need_ton": need,
+                        "message": "Перевод с этим Memo пока не найден"}, 200)
+    if paid + 0.02 < need:
+        return json_ok({"ok": True, "opened": False, "need_ton": need, "paid_ton": paid,
+                        "message": f"Оплачено {paid:g} TON, требуется {need:g} TON"}, 200)
+
+    with _db_lock, db() as conn:
+        conn.execute("INSERT OR IGNORE INTO payments(memo,user_id,amount,kind,tx_hash,created_at)"
+                     " VALUES(?,?,?,?,?,?)",
+                     (memo, uid, paid, "access", tx_hash, int(time.time())))
+    grant_access(uid, KEY_GRANT_TTL, "paid", memo)
+    return json_ok({"ok": True, "opened": True, "paid_ton": paid, "key": memo,
+                    "paid_until": access_until(uid), **access_state(uid)})
 
 
 async def api_donate(request: web.Request) -> web.Response:
     await refresh_rates()
-    return json_ok({"ok": True, "owner_wallet": OWNER_WALLET, "usd_rate": ton_usd(),
-                    "ton_connect": f"ton://transfer/{OWNER_WALLET}"})
+    return json_ok({"ok": True, "owner_wallet": OWNER_WALLET,
+                    "ton_usd": round(ton_usd(), 4), "ton_byn": round(ton_byn(), 4)})
 
 
-# ------------------------------ API: баланс --------------------------------- #
+# ============================ API: баланс ================================== #
+
+def balance_payload(user_id: str) -> Dict[str, Any]:
+    balance = get_balance(user_id)
+    return {
+        "user_id": user_id,
+        "balance_ton": balance,
+        "balance_usd": round(balance * ton_usd(), 2),
+        "balance_byn": round(balance * ton_byn(), 2),
+        "deposit_wallet": DEPOSIT_WALLET,
+        "withdraw_fee": WITHDRAW_FEE_TON,
+        "market_fee": MARKET_FEE,
+    }
+
 
 async def api_balance(request: web.Request) -> web.Response:
-    return json_ok(balance_payload(user_id_of(request)))
+    uid = user_id_of(request)
+    await refresh_rates()
+    return json_ok({"ok": True, **balance_payload(uid)})
 
 
 async def api_topup_memo(request: web.Request) -> web.Response:
     uid = user_id_of(request)
-    return json_ok({"ok": True, "memo": make_memo(uid), "deposit_wallet": DEPOSIT_WALLET})
+    return json_ok({"ok": True, "memo": new_deposit_memo(uid), "deposit_wallet": DEPOSIT_WALLET})
 
 
 async def api_topup_check(request: web.Request) -> web.Response:
     uid = user_id_of(request)
     await refresh_rates()
-    memo = (request.query.get("memo") or "").strip().upper()
-    if not DEPOSIT_WALLET:
-        return json_ok({"ok": False, "error": "DEPOSIT_WALLET не задан в app.py / переменных окружения"}, 400)
+    memo = str(request.query.get("memo") or "").strip()
     if not memo:
         return json_ok({"ok": False, "error": "Нет Memo"}, 400)
 
-    # уже зачислено?
-    with _db_lock, db() as c:
-        row = c.execute("SELECT amount, tx_hash FROM payments WHERE memo=? AND user_id=?", (memo, uid)).fetchone()
-    if row:
-        return json_ok({"ok": True, "credited": False, "amount": row["amount"],
+    with _db_lock, db() as conn:
+        done = conn.execute("SELECT amount FROM payments WHERE memo=? AND kind='deposit'",
+                            (memo,)).fetchone()
+    if done:
+        return json_ok({"ok": True, "credited": False, "amount": done["amount"],
                         "message": "Этот платёж уже зачислен", **balance_payload(uid)})
 
-    total_nano = 0
-    tx_hash = ""
     try:
-        async with aiohttp.ClientSession() as s:
-            url = f"https://tonapi.io/v2/accounts/{quote(DEPOSIT_WALLET, safe='')}/events?limit=50"
-            async with s.get(url, headers=UA, timeout=aiohttp.ClientTimeout(total=12)) as r:
-                data = await r.json(content_type=None)
-                events = (data or {}).get("events") or []
-                for ev in events:
-                    if ev.get("in_progress"):
-                        continue
-                    for act in (ev.get("actions") or []):
-                        status = (act.get("status") or "").lower()
-                        if status not in ("ok", "success", ""):
-                            continue
-                        if act.get("type") != "TonTransfer":
-                            # встречается и вложенный формат {"TonTransfer": {...}}
-                            if "TonTransfer" not in act:
-                                continue
-                        tt = act.get("TonTransfer") or {}
-                        recipient = ((tt.get("recipient") or {}).get("address") or "")
-                        if recipient and recipient != DEPOSIT_WALLET:
-                            continue
-                        body_text = (tt.get("message") or tt.get("comment") or "").strip()
-                        if body_text.upper() != memo:
-                            continue
-                        amount = float(tt.get("amount") or 0)
-                        if amount > 0:
-                            total_nano += amount
-                            tx_hash = tx_hash or str(ev.get("event_id") or act.get("trace_id") or "")
-    except Exception as e:
-        return json_ok({"ok": False, "error": f"tonapi.io недоступен: {type(e).__name__}"}, 502)
+        events = await fetch_ton_events(DEPOSIT_WALLET, 30)
+    except Exception as exc:
+        return json_ok({"ok": False, "error": f"tonapi.io недоступен: {type(exc).__name__}"}, 502)
 
-    if total_nano <= 0:
-        return json_ok({"ok": True, "credited": False, "message": "Транзакция с этим Memo пока не найдена"})
+    amount, tx_hash = find_ton_payment(events, memo, DEPOSIT_WALLET)
+    if amount <= 0:
+        return json_ok({"ok": True, "credited": False,
+                        "message": "Перевод с этим Memo пока не найден"})
 
-    amount_ton = round(total_nano / 1e9, 6)
-    with _db_lock, db() as c:
-        c.execute("INSERT OR IGNORE INTO payments(user_id, memo, amount, tx_hash, created_at) VALUES(?,?,?,?,?)",
-                  (uid, memo, amount_ton, tx_hash, int(time.time())))
-    new_bal = add_balance(uid, amount_ton)
-    return json_ok({"ok": True, "credited": True, "amount": amount_ton,
-                    "message": f"Зачислено {amount_ton:.4f} TON", **balance_payload(uid)})
+    with _db_lock, db() as conn:
+        conn.execute("INSERT OR IGNORE INTO payments(memo,user_id,amount,kind,tx_hash,created_at)"
+                     " VALUES(?,?,?,?,?,?)",
+                     (memo, uid, amount, "deposit", tx_hash, int(time.time())))
+    new_balance = add_balance(uid, amount)
+    return json_ok({"ok": True, "credited": True, "amount": amount,
+                    "message": f"Зачислено {amount:g} TON", **balance_payload(uid),
+                    "balance_ton": new_balance})
 
 
-# ------------------------------ API: лента ---------------------------------- #
+# ============================= API: лента ================================== #
 
 async def api_feed(request: web.Request) -> web.Response:
-    usd, byn = ton_usd(), ton_byn()
-    if sc.SCANNER.tokens_missing():
-        return json_ok({"status": "waiting_tokens", "message": sc.STATUS_NO_TOKENS,
-                        "items": [], "total": 0, "fee": MARKET_FEE,
-                        "rates": RATES["data"], "usd_rate": usd, "byn_rate": byn})
-
-    p = request.query
-    markets = [m for m in p.get("markets", "portals,tonnel,mrkt").split(",") if m]
-    min_profit = _num(p.get("min_profit"), 0) or 0
-    min_mono = _num(p.get("min_mono"), 0) or 0
-    search = (p.get("search") or "").strip().lower()
-    price_from, price_to = _num(p.get("price_from")), _num(p.get("price_to"))
-    beauty = p.get("beauty") in ("1", "true", "on")
     uid = user_id_of(request)
+    await refresh_rates()
+    if not access_active(uid):
+        return json_ok({"ok": False, "paywall": True, "error": "Доступ не оплачен",
+                        "items": [], "total": 0}, 403)
 
-    with _db_lock, db() as c:
-        bought = {r["lot_id"] for r in c.execute("SELECT lot_id FROM inventory WHERE user_id=?", (uid,))}
-        queued = {r["lot_id"] for r in c.execute("SELECT lot_id FROM orders WHERE user_id=?", (uid,))}
+    with _db_lock, db() as conn:
+        taken = {row["lot_id"] for row in conn.execute(
+            "SELECT lot_id FROM inventory WHERE user_id=?", (uid,))}
 
-    items = []
+    usd, byn = ton_usd(), ton_byn()
+    items: List[Dict[str, Any]] = []
     for lot in sc.SCANNER.lots:
-        if lot["market"] not in markets or lot["floor_discount"] < min_profit or lot["monochrome_pct"] < min_mono:
+        if lot["id"] in taken:
             continue
-        if price_from is not None and lot["price"] < price_from:
-            continue
-        if price_to is not None and lot["price"] > price_to:
-            continue
-        if beauty and not lot["beautiful"]:
-            continue
-        if search:
-            hay = " ".join([lot["collection"], lot["model"], lot["backdrop"], lot["symbol"], lot["number"]]).lower()
-            if search not in hay:
-                continue
-        if lot["id"] in bought or lot["id"] in queued:
-            continue
-        items.append({**lot, "profit_usd": round(lot["profit_ton"] * usd, 2),
+        items.append({**lot,
+                      "profit_usd": round(lot["profit_ton"] * usd, 2),
                       "profit_byn": round(lot["profit_ton"] * byn, 2)})
 
-    return json_ok({"status": "ok", "items": items, "total": len(items),
-                    "fee": MARKET_FEE, "rates": RATES["data"],
-                    "usd_rate": usd, "byn_rate": byn,
-                    "balance_ton": get_balance(uid)})
+    return json_ok({
+        "ok": True,
+        "status": "ok" if items else ("waiting" if not sc.SCANNER.lots else "empty"),
+        "message": (sc.STATUS_NO_TOKENS if sc.SCANNER.tokens_missing()
+                    else "Лента пуста — Portals не вернул лоты"),
+        "items": items,
+        "total": len(items),
+        "errors": sc.SCANNER.errors,
+        "updated_at": int(sc.SCANNER.updated_at or 0),
+        "rates": rates_payload(),
+        "fee": MARKET_FEE,
+        "balance_ton": get_balance(uid),
+    })
 
 
-# ------------------------------ API: покупка на сайте ----------------------- #
+# ========================== API: покупка на сайте ========================== #
 
 async def api_buy(request: web.Request) -> web.Response:
     uid = user_id_of(request)
     await refresh_rates()
-    if not access_state(uid)["active"]:
+    if not access_active(uid):
         return json_ok({"ok": False, "error": "Доступ не оплачен", "paywall": True}, 403)
     try:
         body = await request.json()
     except Exception:
         body = {}
-    lot_id = str(body.get("lot_id") or "")
-    lot = next((l for l in sc.SCANNER.lots if l["id"] == lot_id), None)
-    if not lot:
-        return json_ok({"ok": False, "error": "Лот уже неактуален в ленте"}, 404)
 
-    bal = get_balance(uid)
+    lot_id = str(body.get("lot_id") or "")
+    lot = next((item for item in sc.SCANNER.lots if item["id"] == lot_id), None)
+    if not lot:
+        return json_ok({"ok": False, "error": "Лот уже недоступен в ленте"}, 404)
+
     price = round(float(lot["price"]), 6)
-    if bal < price:
-        return json_ok({"ok": False, "error": f"Недостаточно средств: {price:.2f} TON требуется, на балансе {bal:.2f} TON",
+    balance = get_balance(uid)
+    if balance + 1e-9 < price:
+        return json_ok({"ok": False, "error": f"Недостаточно средств: нужно {price:.2f} TON, "
+                                              f"на балансе {balance:.2f} TON",
                         **balance_payload(uid)}, 402)
 
-    with _db_lock, db() as c:
-        dup = c.execute("SELECT id FROM inventory WHERE user_id=? AND lot_id=?", (uid, lot_id)).fetchone()
+    with _db_lock, db() as conn:
+        dup = conn.execute("SELECT id FROM inventory WHERE user_id=? AND lot_id=?",
+                           (uid, lot_id)).fetchone()
         if dup:
             return json_ok({"ok": False, "error": "Подарок уже куплен", **balance_payload(uid)}, 409)
-        c.execute("""INSERT INTO inventory(user_id, lot_id, collection, number, model, backdrop, symbol,
-                     market, market_label, url, image, buy_price, rec_price, profit_ton, status, created_at)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'owned', ?)""",
-                  (uid, lot_id, lot["collection"], lot["number"], lot["model"], lot["backdrop"], lot["symbol"],
-                   lot["market"], lot["market_label"], lot["url"], lot["image"], price,
-                   lot["rec_price"], lot["profit_ton"], int(time.time())))
-        inv_id = c.execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
-        c.execute("""INSERT INTO orders(user_id, lot_id, url, max_price, target_price, status, created_at)
-                     VALUES(?,?,?,?,?, 'queued', ?)""",
-                  (uid, lot_id, lot["url"], price, lot["rec_price"], int(time.time())))
-    new_bal = add_balance(uid, -price)
-    sc.SCANNER.lots = [l for l in sc.SCANNER.lots if l["id"] != lot_id]
-    return json_ok({"ok": True, "inventory_id": inv_id, "bought": lot["collection"],
-                    "number": lot["number"], "price": price,
-                    **balance_payload(uid), "balance_ton": new_bal})
+        cursor = conn.execute(
+            """INSERT INTO inventory(user_id, lot_id, collection, number, model, backdrop, symbol,
+                                     url, image, buy_price, rec_price, profit_ton, status, created_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'owned', ?)""",
+            (uid, lot_id, lot["collection"], lot["number"], lot["model"], lot["backdrop"],
+             lot["symbol"], lot["url"], lot["image"], price, lot["rec_price"],
+             lot["profit_ton"], int(time.time())),
+        )
+        inventory_id = cursor.lastrowid
+        conn.execute(
+            """INSERT INTO orders(user_id, lot_id, url, max_price, target_price, status, created_at)
+               VALUES(?,?,?,?,?, 'queued', ?)""",
+            (uid, lot_id, lot["url"], price, lot["rec_price"], int(time.time())),
+        )
+
+    new_balance = add_balance(uid, -price)
+    sc.SCANNER.lots = [item for item in sc.SCANNER.lots if item["id"] != lot_id]
+    return json_ok({"ok": True, "inventory_id": inventory_id,
+                    "bought": lot["collection"], "number": lot["number"], "price": price,
+                    **balance_payload(uid), "balance_ton": new_balance})
 
 
-# ------------------------------ API: инвентарь ------------------------------ #
+# ============================ API: инвентарь =============================== #
 
 async def api_inventory(request: web.Request) -> web.Response:
     uid = user_id_of(request)
     await refresh_rates()
-    with _db_lock, db() as c:
-        rows = [dict(r) for r in c.execute(
+    with _db_lock, db() as conn:
+        rows = [dict(row) for row in conn.execute(
             "SELECT * FROM inventory WHERE user_id=? ORDER BY created_at DESC", (uid,))]
-    return json_ok({"ok": True, "items": rows, "count": len(rows),
-                    "withdraw_fee": WITHDRAW_FEE_TON, **balance_payload(uid)})
+    return json_ok({"ok": True, "items": rows, "count": len(rows), **balance_payload(uid)})
 
 
 async def api_withdraw(request: web.Request) -> web.Response:
     uid = user_id_of(request)
+    await refresh_rates()
     try:
         body = await request.json()
     except Exception:
         body = {}
-    inv_id = int(body.get("inventory_id") or 0)
-    to = str(body.get("to") or "").strip()
-    if not re.fullmatch(r"@[A-Za-z][A-Za-z0-9_]{3,31}", to):
+
+    try:
+        inventory_id = int(body.get("inventory_id") or 0)
+    except (TypeError, ValueError):
+        inventory_id = 0
+    to_username = str(body.get("to") or "").strip()
+
+    if not re.fullmatch(r"@[A-Za-z][A-Za-z0-9_]{3,31}", to_username):
         return json_ok({"ok": False, "error": "Укажите получателя в формате @username"}, 400)
 
-    with _db_lock, db() as c:
-        item = c.execute("SELECT * FROM inventory WHERE id=? AND user_id=?", (inv_id, uid)).fetchone()
-        if not item:
-            return json_ok({"ok": False, "error": "Подарок не найден"}, 404)
-        if item["status"] != "owned":
-            return json_ok({"ok": False, "error": "По этому подарку уже создана заявка"}, 409)
+    with _db_lock, db() as conn:
+        item = conn.execute("SELECT * FROM inventory WHERE id=? AND user_id=?",
+                            (inventory_id, uid)).fetchone()
+    if not item:
+        return json_ok({"ok": False, "error": "Подарок не найден в инвентаре"}, 404)
+    if item["status"] != "owned":
+        return json_ok({"ok": False, "error": "По этому подарку уже создана заявка"}, 409)
 
-    bal = get_balance(uid)
-    if bal < WITHDRAW_FEE_TON:
-        return json_ok({"ok": False, "error": f"Нужно {WITHDRAW_FEE_TON} TON на балансе для комиссии (у вас {bal:.2f})",
+    balance = get_balance(uid)
+    if balance + 1e-9 < WITHDRAW_FEE_TON:
+        return json_ok({"ok": False,
+                        "error": f"Нужно {WITHDRAW_FEE_TON:g} TON на балансе для комиссии "
+                                 f"(у вас {balance:.2f} TON)",
                         **balance_payload(uid)}, 402)
 
-    status = f"Заявка на вывод для {to} создана"
-    with _db_lock, db() as c:
-        c.execute("UPDATE inventory SET status=?, withdraw_to=? WHERE id=?", (status, to, inv_id))
-        c.execute("""INSERT INTO withdrawals(user_id, inventory_id, to_username, fee, status, created_at)
-                     VALUES(?,?,?,?, 'pending', ?)""", (uid, inv_id, to, WITHDRAW_FEE_TON, int(time.time())))
-        c.execute("UPDATE inventory SET status=? WHERE id=?", (status, inv_id))
-    new_bal = add_balance(uid, -WITHDRAW_FEE_TON)
+    status = f"Заявка на вывод для {to_username} создана"
+    with _db_lock, db() as conn:
+        conn.execute("UPDATE inventory SET status=?, withdraw_to=? WHERE id=?",
+                     (status, to_username, inventory_id))
+        conn.execute("INSERT INTO withdrawals(user_id, inventory_id, to_username, fee, status, created_at)"
+                     " VALUES(?,?,?,?, 'pending', ?)",
+                     (uid, inventory_id, to_username, WITHDRAW_FEE_TON, int(time.time())))
+
+    new_balance = add_balance(uid, -WITHDRAW_FEE_TON)
     return json_ok({"ok": True, "status": status, "fee": WITHDRAW_FEE_TON,
-                    **balance_payload(uid), "balance_ton": new_bal})
+                    **balance_payload(uid), "balance_ton": new_balance})
 
 
-# ------------------------------ API: корзина / заказы ----------------------- #
+# ======================== API: корзина / заказы ============================ #
 
 async def api_orders(request: web.Request) -> web.Response:
     uid = user_id_of(request)
-    with _db_lock, db() as c:
-        rows = [dict(r) for r in c.execute(
-            "SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 100", (uid,))]
+    with _db_lock, db() as conn:
+        rows = [dict(row) for row in conn.execute(
+            "SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 200", (uid,))]
     return json_ok({"ok": True, "orders": rows, "count": len(rows)})
 
 
 async def api_withdrawals(request: web.Request) -> web.Response:
     uid = user_id_of(request)
-    with _db_lock, db() as c:
-        rows = [dict(r) for r in c.execute(
-            "SELECT * FROM withdrawals WHERE user_id=? ORDER BY created_at DESC LIMIT 100", (uid,))]
+    with _db_lock, db() as conn:
+        rows = [dict(row) for row in conn.execute(
+            "SELECT * FROM withdrawals WHERE user_id=? ORDER BY created_at DESC LIMIT 200", (uid,))]
     return json_ok({"ok": True, "withdrawals": rows, "count": len(rows)})
 
 
-# ------------------------------ lifecycle ----------------------------------- #
+# =============================== lifecycle ================================= #
 
 async def _rates_loop() -> None:
     while True:
@@ -619,47 +794,56 @@ async def on_startup(app: web.Application) -> None:
     init_db()
     try:
         await refresh_rates(force=True)
-    except Exception:
-        pass
-    tasks = [asyncio.create_task(_rates_loop())]
-    # сканер запускаем всегда: Portals работает со своим токеном по умолчанию,
-    # а появление токенов Tonnel/MRKT в окружении подхватывается на лету
+    except Exception as exc:
+        log(f"startup rates error: {type(exc).__name__}")
     try:
         await sc.SCANNER.poll_once()
-    except Exception:
-        pass
-    tasks.append(asyncio.create_task(sc.SCANNER.run_forever()))
+    except Exception as exc:
+        log(f"startup scan error: {type(exc).__name__}")
+    tasks = [
+        asyncio.create_task(_rates_loop()),
+        asyncio.create_task(sc.SCANNER.run_forever(sc.SCAN_INTERVAL)),
+    ]
     app["tasks"] = tasks
+    log(f"Started. Portals token: {'set' if sc.PORTALS.enabled() else 'missing'}")
 
 
 async def on_cleanup(app: web.Application) -> None:
-    for t in app.get("tasks", []):
-        t.cancel()
+    for task in app.get("tasks", []):
+        task.cancel()
 
 
 def create_app() -> web.Application:
     app = web.Application(client_max_size=1024 * 512)
     app.router.add_get("/", index)
+    app.router.add_get("/icon.svg", icon)
+    app.router.add_get("/tonconnect-manifest.json", manifest)
+
     app.router.add_get("/api/rates", api_rates)
+
     app.router.add_get("/api/access", api_access)
     app.router.add_get("/api/access/memo", api_access_memo)
     app.router.add_get("/api/access/check", api_access_check)
     app.router.add_post("/api/access/unlock", api_access_unlock)
     app.router.add_get("/api/donate", api_donate)
+
     app.router.add_get("/api/balance", api_balance)
     app.router.add_get("/api/topup/memo", api_topup_memo)
     app.router.add_get("/api/topup/check", api_topup_check)
+
     app.router.add_get("/api/feed", api_feed)
     app.router.add_post("/api/buy", api_buy)
     app.router.add_get("/api/inventory", api_inventory)
     app.router.add_post("/api/withdraw", api_withdraw)
     app.router.add_get("/api/orders", api_orders)
     app.router.add_get("/api/withdrawals", api_withdrawals)
+
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     return app
 
 
+port = int(os.environ.get("PORT", 8080))
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
     web.run_app(create_app(), host="0.0.0.0", port=port)
