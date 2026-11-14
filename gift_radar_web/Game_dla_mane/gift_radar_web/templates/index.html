@@ -54,8 +54,9 @@ header{position:sticky;top:0;z-index:30;backdrop-filter:blur(14px);-webkit-backd
 .hbtn.gold{color:#1a1300;background:linear-gradient(135deg,#FFD54F,var(--gold));box-shadow:0 10px 26px -12px var(--gold)}
 .hbtn.ton{color:#08202e;background:linear-gradient(135deg,#4ec7ff,var(--ton));box-shadow:0 10px 26px -12px var(--ton)}
 .hbtn.ghost{color:var(--dim);background:rgba(255,255,255,.05);border:1px solid var(--line)}
-.hbtn.gear{padding:10px 12px;font-size:16px;line-height:1;color:var(--gold);
-  background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.35)}
+.hbtn.gear{padding:9px 12px;font-size:20px;line-height:1;color:var(--gold);
+  background:rgba(255,179,0,.14);border:1px solid rgba(255,179,0,.55);min-width:44px;min-height:44px;
+  display:inline-flex;align-items:center;justify-content:center;position:relative;z-index:31}
 .hbtn:hover{transform:translateY(-2px);filter:brightness(1.08)}
 .hbtn:disabled{opacity:.55;cursor:not-allowed;transform:none}
 
@@ -171,10 +172,11 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
   color:var(--dim);white-space:pre-wrap;max-height:300px;overflow:auto;margin-top:10px}
 
 /* ===================== landing ===================== */
-#landing{position:fixed;inset:0;z-index:95;display:none;overflow:auto;
+#landing{position:fixed;inset:0;z-index:99999;display:flex;overflow:auto;
   background:radial-gradient(1000px 620px at 20% 0%,rgba(0,152,234,.18),transparent 62%),
              radial-gradient(820px 520px at 85% 100%,rgba(255,179,0,.12),transparent 62%),#05070c}
-#landing.on{display:block;animation:fade .5s ease}
+#landing.on{display:flex;animation:fade .5s ease}
+#landing:not(.on){display:none}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 #bgfx{position:fixed;inset:0;pointer-events:none;opacity:.75}
 .landing-inner{position:relative;max-width:980px;margin:0 auto;padding:64px 24px 160px;text-align:center;z-index:2}
@@ -194,7 +196,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
 .price-card .desc{font-size:11.5px;color:var(--dim);margin-top:4px}
 
 /* vertical access buttons */
-#vbtns{position:fixed;right:22px;bottom:22px;z-index:96;display:none;flex-direction:column;gap:10px}
+#vbtns{position:fixed;right:24px;bottom:24px;z-index:100000;display:none;flex-direction:column;gap:10px}
 #vbtns.on{display:flex}
 .vbtn{border:none;cursor:pointer;font-family:inherit;font-weight:800;font-size:13.5px;padding:13px 22px;
   border-radius:14px;min-width:168px;text-align:center;transition:transform .2s,box-shadow .25s,filter .2s;
@@ -454,7 +456,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
 </div>
 
 <!-- ===================== LANDING ===================== -->
-<div id="landing">
+<div id="landing" class="on">
   <div class="landing-inner">
     <svg class="float" width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs><linearGradient id="dg3" x1="20" y1="20" x2="100" y2="105" gradientUnits="userSpaceOnUse">
@@ -495,7 +497,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
   </div>
 </div>
 
-<div id="vbtns">
+<div id="vbtns" class="on">
   <button class="vbtn enter" id="btnEnter">Войти</button>
   <button class="vbtn reg" id="btnRegister">Регистрация</button>
   <button class="vbtn exit" id="btnExit">Выйти</button>
@@ -676,6 +678,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     lots: [],
     inventory: [],
     orders: [],
+    cartLocal: [],
     memo: '',
     ownerWallet: '',
     depositWallet: '',
@@ -917,6 +920,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     $('vbtns').classList.remove('on');
     $('over').classList.remove('on');
     $('bgfx').style.display = 'none';
+    document.body.style.overflow = '';
     startFeed();
     loadBalance();
     loadInventory();
@@ -928,6 +932,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     $('vbtns').classList.add('on');
     $('over').classList.remove('on');
     $('bgfx').style.display = 'block';
+    document.body.style.overflow = '';
     startBg();
     stopFeed();
   }
@@ -936,6 +941,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     $('landing').classList.remove('on');
     $('vbtns').classList.remove('on');
     $('over').classList.add('on');
+    document.body.style.overflow = '';
   }
 
   async function checkSession() {
@@ -1490,6 +1496,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
 
     $('settingsBtn').addEventListener('click', openSettings);
     $('openSettingsFromTab').addEventListener('click', openSettings);
+
     $('stClose').addEventListener('click', () => closeModal('settingsModal'));
     $('stExtend').addEventListener('click', () => { closeModal('settingsModal'); openLimit({ error: 'Докупка дополнительных устройств' }); });
     $('stDonate').addEventListener('click', () => {
@@ -1583,6 +1590,11 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     $('setInterval').value = String(state.interval);
     $('setUsername').value = localStorage.getItem(LS.username) || '';
     $('setUid').textContent = state.deviceId.slice(0, 8) + '…';
+    document.body.style.overflow = 'hidden';
+
+    $('landing').classList.add('on');
+    $('vbtns').classList.add('on');
+    startBg();
 
     wire();
     loadFilters();
@@ -1605,6 +1617,7 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
   }
 
   document.addEventListener('DOMContentLoaded', boot);
+  if (document.readyState !== 'loading') setTimeout(boot, 0);
 })();
 </script>
 </body>

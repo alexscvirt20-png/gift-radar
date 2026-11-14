@@ -818,7 +818,20 @@ def find_ton_payment(events: List[Dict[str, Any]], memo: str,
 # ================================ страницы ================================= #
 
 async def index(request: web.Request) -> web.Response:
-    return web.FileResponse(TEMPLATES_DIR / "index.html")
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "index.html")
+    with open(template_path, "r", encoding="utf-8") as fh:
+        html = fh.read()
+    return web.Response(
+        text=html,
+        content_type="text/html",
+        charset="utf-8",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Gift-Radar-Version": "2026.11.14-landing",
+        },
+    )
 
 
 async def manifest(request: web.Request) -> web.Response:
