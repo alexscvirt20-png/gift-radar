@@ -475,6 +475,15 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
       </div>
     </div>
 
+    <!-- цена к оплате в TON (живой курс OKX / Bybit) -->
+    <div class="pay-opt" style="margin-top:14px;border-color:rgba(0,152,234,.4)">
+      <h4>💵 Сумма к оплате</h4>
+      <div class="pw-ton" id="pwTonBig" style="font-size:22px">— TON</div>
+      <p class="muted" style="margin-top:4px">
+        $12.99 ÷ <b id="pwRate">—</b> USD за 1 TON · курс обновляется каждые 30 сек
+      </p>
+    </div>
+
     <div class="pw-tabs">
       <button class="pw-tab on" data-pw="login">🔑 Войти</button>
       <button class="pw-tab" data-pw="buy">💳 Купить доступ</button>
@@ -766,14 +775,17 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
   }
   function paintAccess() {
     const a = state.access;
-    $('pwTon').textContent = '≈ ' + (a.price_ton ? (+a.price_ton).toFixed(2) : '—') + ' TON';
-    $('pwConnectSum').textContent = a.price_ton ? (+a.price_ton).toFixed(2) + ' TON' : '— TON';
+    const priceTon = a.price_ton ? (+a.price_ton).toFixed(2) : '—';
+    $('pwTon').textContent = '≈ ' + priceTon + ' TON';
+    $('pwTonBig').textContent = priceTon + ' TON';
+    $('pwRate').textContent = state.rates.ton_usd ? (+state.rates.ton_usd).toFixed(3) : '—';
+    $('pwConnectSum').textContent = priceTon + ' TON';
     $('pwWallet').textContent = a.owner_wallet || state.ownerWallet || '—';
     if (a.owner_wallet) state.ownerWallet = a.owner_wallet;
     if (a.deposit_wallet) state.depositWallet = a.deposit_wallet;
     paintDeposit();
     const active = !!a.active;
-    $('accLbl').textContent = active ? '✅ Активен' : '🔒 Нет доступа';
+    $('accLbl').textContent = active ? '✅ Активен (' + a.days_left + ' дн.)' : '🔒 Нет доступа';
     $('setSubDays').textContent = active ? a.days_left + ' дн.' : '—';
     $('setSubDesc').textContent = active
       ? 'Доступ до ' + new Date(a.paid_until * 1000).toLocaleDateString('ru-RU')
