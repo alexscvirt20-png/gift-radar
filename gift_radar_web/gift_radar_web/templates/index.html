@@ -317,7 +317,10 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
       <button class="btn ghost" id="resetFilters" style="flex:1">Сбросить фильтры</button>
     </div>
 
-    <h2 style="margin-top:20px">Аккаунт</h2>
+    <h2 style="margin-top:20px">Статус системы</h2>
+    <div class="line"><span>Portals API</span><b id="statusPortals">…</b></div>
+    <div class="line"><span>Лотов с сервера</span><b id="statusLots">0</b></div>
+    <div class="line"><span>Курс TON</span><b id="statusRate">…</b></div>
     <div class="line"><span>Подписка</span><b id="accLbl">—</b></div>
     <div class="line"><span>Вывод подарка</span><b>0.6 TON</b></div>
     <div class="line"><span>Комиссия маркета</span><b>2%</b></div>
@@ -1098,6 +1101,11 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     try {
       const { status, data } = await api('/api/feed');
       $('liveDot').classList.toggle('off', !(data && (data.ok || data.paywall)));
+      if (data) {
+        const perr = (data.errors || {}).portals;
+        $('statusPortals').textContent = (perr && perr.length) ? ('⚠ ' + String(perr[0]).slice(0, 60)) : '✅ OK';
+        $('statusLots').textContent = (data.total || 0) || ((data.items || []).length);
+      }
       if (data && data.rates) paintRates(data.rates);
       if (status === 403) {
         // paywall-режим: показываем статус подключения Portals и превью ленты за стеклом
