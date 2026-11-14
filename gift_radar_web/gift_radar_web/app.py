@@ -507,6 +507,7 @@ async def api_access_unlock(request: web.Request) -> web.Response:
         return json_ok({"ok": False, "error": "Введите ключ"}, 400)
     if key.upper() not in {k.upper() for k in MASTER_KEYS}:
         return json_ok({"ok": False, "error": "Неверный ключ доступа"}, 403)
+    log(f"access granted by key: {uid} -> {key[:12]}")
     grant_access(uid, KEY_GRANT_TTL, "vip", key.upper())
     return json_ok({"ok": True, "opened": True, "key": key.upper(),
                     "paid_until": access_until(uid), **access_state(uid)})
@@ -623,8 +624,13 @@ async def api_feed(request: web.Request) -> web.Response:
     uid = user_id_of(request)
     await refresh_rates()
     if not access_active(uid):
+        # paywall: показываем статус подключения и демо-превью (нельзя купить)
         return json_ok({"ok": False, "paywall": True, "error": "Доступ не оплачен",
-                        "items": [], "total": 0}, 403)
+                        "status": "waiting" if not sc.SCANNER.lots else "ok",
+                        "message": ("Подключение к Portals…" if not sc.SCANNER.lots
+                                    else "Доступ закрыт — оплатите подписку"),
+                        "items": [{**lot, "locked": True} for lot in sc.SCANNER.lots[:12]],
+                        "total": 0, "fee": MARKET_FEE, "rates": rates_payload()}, 403)
 
     with _db_lock, db() as conn:
         taken = {row["lot_id"] for row in conn.execute(

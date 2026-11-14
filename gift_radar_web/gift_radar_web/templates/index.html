@@ -498,6 +498,11 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
           <input type="checkbox" id="pwRemember" checked>
           Запомнить это устройство на 30 дней
         </label>
+        <p class="muted" style="margin-top:10px">Быстрый вход мастер-ключом:</p>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button class="btn ghost" data-quickkey="GIFT-OWNER-777" style="font-size:11px;padding:6px 10px">👑 GIFT-OWNER-777</button>
+          <button class="btn ghost" data-quickkey="FRIEND-FREE-2026" style="font-size:11px;padding:6px 10px">🎁 FRIEND-FREE-2026</button>
+        </div>
         <button class="main-btn" id="pwLoginBtn" style="width:100%;margin-top:12px">🔓 Войти</button>
         <p class="muted" style="margin-top:8px">Ключ выдаётся после оплаты. Мастер-ключи владельца и друга работают без оплаты.</p>
       </div>
@@ -769,7 +774,8 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
       startFeed();
     } else {
       setLocked(true);
-      stopFeed();
+      // в момент закрытого доступа лента Portals всё равно опрашивается (превью за стеклом)
+      startFeed();
     }
     paintAccess();
   }
@@ -1091,13 +1097,21 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     state.busy = true;
     try {
       const { status, data } = await api('/api/feed');
-      $('liveDot').classList.toggle('off', !(data && data.ok));
-      if (status === 403) { setAccess({ active: false }, false); return; }
-      if (!data || !data.ok) {
-        $('updLbl').textContent = 'ошибка ленты';
+      $('liveDot').classList.toggle('off', !(data && (data.ok || data.paywall)));
+      if (data && data.rates) paintRates(data.rates);
+      if (status === 403) {
+        // paywall-режим: показываем статус подключения Portals и превью ленты за стеклом
+        setAccess(Object.assign({}, state.access, { active: false }), false);
+        const list = (data && data.items) || [];
+        if (list.length) setLots(list); else setLots([]);
+        $('updLbl').textContent = (data && data.message) || 'Доступ закрыт';
         return;
       }
-      if (data.rates) paintRates(data.rates);
+      if (!data || !data.ok) {
+        $('updLbl').textContent = (data && data.message) || 'ошибка ленты';
+        setLots([]);
+        return;
+      }
       if (data.balance_ton !== undefined) { state.balance.balance_ton = data.balance_ton; paintBalance(); }
       $('updLbl').textContent = 'обновлено ' + new Date().toLocaleTimeString('ru-RU');
       setLots(data.items || []);
@@ -1305,6 +1319,10 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
       document.querySelectorAll('.pw-pane').forEach(p => p.classList.toggle('on', p.id === 'pw-' + tab.dataset.pw));
     }));
     $('pwLoginBtn').addEventListener('click', loginWithKey);
+    document.querySelectorAll('[data-quickkey]').forEach(b => b.addEventListener('click', () => {
+      $('pwKey').value = b.dataset.quickkey;
+      loginWithKey();
+    }));
     $('pwKey').addEventListener('keydown', e => { if (e.key === 'Enter') loginWithKey(); });
     $('pwCheckBtn').addEventListener('click', checkPayment);
     $('pwCopyAddr').addEventListener('click', () => copy(state.ownerWallet, 'Адрес скопирован'));
@@ -1424,13 +1442,18 @@ pre{background:#0e1219;border:1px solid var(--line);border-radius:12px;padding:1
     wire();
     $('setUid').textContent = state.uid;
 
+    // мгновенно показываем paywall, чтобы не было пустого экрана
+    setLocked(true);
+
     if (isLocalAccessValid()) {
       const ok = await unlockSilently();
       if (ok) { loadRates(false); loadBalance(); loadInventory(); loadCart(); return; }
     }
     await loadRates(false);
     await loadAccess();
+    await loadPayMemo();
     loadBalance();
+    startFeed();                       // превью ленты за стеклом + статус подключения
   }
 
   document.addEventListener('DOMContentLoaded', boot);
