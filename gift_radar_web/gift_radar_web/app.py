@@ -44,8 +44,11 @@ DEPOSIT_WALLET: str = os.environ.get(
     "DEPOSIT_WALLET", "UQD3U-lkGDlbRCGM2C6fPnlolt2EnQdcr5Uc6p94LWj39qEX"
 ).strip()
 
-ACCESS_PRICE_USD: float = 12.99
+ACCESS_PRICE_USD: float = 9.99
+EXTEND_PRICE_USD: float = 4.99
 ACCESS_DAYS: int = 30
+BASE_DEVICES: int = 3
+EXTRA_DEVICES: int = 3
 MASTER_KEYS: Tuple[str, ...] = ("GIFT-OWNER-777", "FRIEND-FREE-2026")
 
 WITHDRAW_FEE_TON: float = 0.6
@@ -136,6 +139,34 @@ def init_db() -> None:
                 amount     REAL,
                 kind       TEXT,
                 tx_hash    TEXT,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS license_keys(
+                code       TEXT PRIMARY KEY,
+                vip        INTEGER NOT NULL DEFAULT 0,
+                devices_limit INTEGER NOT NULL DEFAULT 3,
+                valid_until INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS devices(
+                device_id  TEXT PRIMARY KEY,
+                code       TEXT NOT NULL,
+                user_agent TEXT,
+                created_at INTEGER NOT NULL,
+                last_seen  INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sessions(
+                device_id  TEXT PRIMARY KEY,
+                code       TEXT NOT NULL,
+                token      TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memos(
+                memo       TEXT PRIMARY KEY,
+                device_id  TEXT NOT NULL,
+                kind       TEXT NOT NULL,
+                code       TEXT,
+                required_ton REAL,
                 created_at INTEGER NOT NULL
             );
             """
@@ -392,6 +423,356 @@ def new_pay_memo(user_id: str) -> str:
     return f"PAY-{secrets.randbelow(90000) + 10000}-{user_id[-4:].upper() or 'USER'}"
 
 
+# ==================== лицензионные коды и устройства ======================= #
+
+FOREVER = 4102444800          # 2100-01-01
+VIP_CODES = {k.upper() for k in MASTER_KEYS}
+
+
+def gen_code() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    block = lambda: "".join(secrets.choice(alphabet) for _ in range(4))
+    return f"GIFT-{block()}-{block()}"
+
+
+def gen_memo(prefix: str, digits: int = 5) -> str:
+    return f"{prefix}-{secrets.randbelow(10 ** digits - 10 ** (digits - 1)) + 10 ** (digits - 1)}"
+
+
+def key_info(code: str) -> Optional[Dict[str, Any]]:
+    norm = (code or "").strip().upper()
+    if not norm:
+        return None
+    with _db_lock, db() as conn:
+        row = conn.execute("SELECT * FROM license_keys WHERE code=?", (norm,)).fetchone()
+    if row:
+        return dict(row)
+    if norm in VIP_CODES:
+        return {"code": norm, "vip": 1, "devices_limit": 10 ** 6, "valid_until": FOREVER,
+                "created_at": 0}
+    return None
+
+
+def key_devices(code: str) -> List[Dict[str, Any]]:
+    with _db_lock, db() as conn:
+        rows = conn.execute(
+            "SELECT device_id, created_at, last_seen, user_agent FROM devices WHERE code=? "
+            "ORDER BY created_at ASC", (code.strip().upper(),))
+    return [dict(r) for r in rows]
+
+
+def key_devices_count(code: str) -> int:
+    with _db_lock, db() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM devices WHERE code=?",
+                           (code.strip().upper(),)).fetchone()
+    return int(row["n"]) if row else 0
+
+
+def bind_device(code: str, device_id: str, ua: str = "") -> Dict[str, Any]:
+    code = code.strip().upper()
+    now = int(time.time())
+    with _db_lock, db() as conn:
+        if conn.execute("SELECT 1 FROM devices WHERE device_id=?", (device_id,)).fetchone():
+            conn.execute("UPDATE devices SET last_seen=?, code=? WHERE device_id=?",
+                         (now, code, device_id))
+        else:
+            conn.execute("INSERT INTO devices(device_id, code, user_agent, created_at, last_seen)"
+                         " VALUES(?,?,?,?,?)", (device_id, code, ua[:200], now, now))
+    return {"ok": True}
+
+
+def session_for(device_id: str) -> Optional[Dict[str, Any]]:
+    now = int(time.time())
+    with _db_lock, db() as conn:
+        session = conn.execute("SELECT * FROM sessions WHERE device_id=?", (device_id,)).fetchone()
+        if not session:
+            return None
+        row = conn.execute("SELECT * FROM license_keys WHERE code=?", (session["code"],)).fetchone()
+        conn.execute("UPDATE devices SET last_seen=? WHERE device_id=?", (now, device_id))
+    info = dict(row) if row else {"code": session["code"], "vip": 1,
+                                  "devices_limit": 10 ** 6, "valid_until": FOREVER}
+    if not info["vip"] and int(info["valid_until"]) <= now:
+        return {"expired": True, "code": session["code"]}
+    info["token"] = session["token"]
+    return info
+
+
+def revoke_device(device_id: str, code: str) -> None:
+    with _db_lock, db() as conn:
+        conn.execute("DELETE FROM sessions WHERE device_id=? AND code=?", (device_id, code))
+        conn.execute("DELETE FROM devices WHERE device_id=? AND code=?", (device_id, code))
+
+
+def drop_session(device_id: str, code: Optional[str] = None) -> None:
+    with _db_lock, db() as conn:
+        if code:
+            conn.execute("DELETE FROM sessions WHERE device_id=? AND code=?", (device_id, code))
+        else:
+            conn.execute("DELETE FROM sessions WHERE device_id=?", (device_id,))
+
+
+def make_session(code: str, device_id: str) -> str:
+    token = secrets.token_urlsafe(24)
+    with _db_lock, db() as conn:
+        conn.execute("INSERT INTO sessions(device_id, code, token, created_at) VALUES(?,?,?,?)"
+                     " ON CONFLICT(device_id) DO UPDATE SET code=excluded.code, token=excluded.token",
+                     (device_id, code.strip().upper(), token, int(time.time())))
+    return token
+
+
+def session_payload(info: Dict[str, Any], device_id: str) -> Dict[str, Any]:
+    code = str(info.get("code") or "")
+    now = int(time.time())
+    until = int(info.get("valid_until") or 0)
+    vip = bool(info.get("vip"))
+    limit = int(info.get("devices_limit") or BASE_DEVICES)
+    return {
+        "active": True,
+        "code": code,
+        "vip": vip,
+        "paid_until": until,
+        "days_left": 99999 if (vip or until >= FOREVER) else max(0, (until - now + 86399) // 86400),
+        "devices_limit": limit,
+        "devices_used": key_devices_count(code),
+        "device_id": device_id,
+        "price_usd": ACCESS_PRICE_USD,
+        "extend_usd": EXTEND_PRICE_USD,
+        "extra_devices": EXTRA_DEVICES,
+        "owner_wallet": OWNER_WALLET,
+        "deposit_wallet": DEPOSIT_WALLET,
+    }
+
+
+async def require_access(request: web.Request) -> Tuple[Optional[str], Optional[web.Response]]:
+    """Проверка device_id + токена сессии. Возвращает (device_id, error_response)."""
+    device_id = (request.query.get("device_id") or request.headers.get("X-Device-Id") or "").strip()
+    token = (request.query.get("token") or request.headers.get("X-Access-Token") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{6,64}", device_id or ""):
+        return None, json_ok({"ok": False, "paywall": True, "error": "Нет device_id"}, 401)
+    info = session_for(device_id)
+    if not info:
+        return None, json_ok({"ok": False, "paywall": True, "error": "Сессия не найдена"}, 401)
+    if info.get("expired"):
+        return None, json_ok({"ok": False, "paywall": True, "expired": True,
+                              "error": "Срок подписки истёк"}, 403)
+    if not token or token != info.get("token"):
+        return None, json_ok({"ok": False, "paywall": True, "error": "Неверный токен сессии"}, 401)
+    return device_id, None
+
+
+# ============================ API: сессия ================================== #
+
+async def api_session(request: web.Request) -> web.Response:
+    device_id = (request.query.get("device_id") or "").strip()
+    token = (request.query.get("token") or "").strip()
+    info = session_for(device_id) if device_id else None
+    if not info or info.get("expired") or info.get("token") != token:
+        return json_ok({"ok": True, "active": False,
+                        "reason": "expired" if info and info.get("expired") else ""})
+    return json_ok({"ok": True, **session_payload(info, device_id)})
+
+
+async def api_login(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    device_id = str(body.get("device_id") or "").strip()
+    code = str(body.get("code") or "").strip().upper()
+    ua = str(body.get("ua") or request.headers.get("User-Agent") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{6,64}", device_id):
+        return json_ok({"ok": False, "error": "Некорректный device_id"}, 400)
+    info = key_info(code)
+    if not info:
+        return json_ok({"ok": False, "error": "Неверный код доступа"}, 403)
+    if not info["vip"] and int(info["valid_until"]) <= int(time.time()):
+        return json_ok({"ok": False, "error": "Срок действия кода истёк"}, 403)
+
+    bound_codes = {d["code"] for d in key_devices(code)}
+    if not info["vip"] and device_id not in [d["device_id"] for d in key_devices(code)]:
+        if len(bound_codes) >= int(info["devices_limit"]):
+            return json_ok({"ok": False, "limit": True,
+                            "error": f"Лимит устройств для кода достигнут ({info['devices_limit']}). "
+                                     f"Докупите +{EXTRA_DEVICES} устройства за ${EXTEND_PRICE_USD}",
+                            "extend_usd": EXTEND_PRICE_USD, "price_usd": ACCESS_PRICE_USD,
+                            "extra_devices": EXTRA_DEVICES,
+                            "extend_ton": round(EXTEND_PRICE_USD / ton_usd(), 2) if ton_usd() else None,
+                            "owner_wallet": OWNER_WALLET}, 409)
+    bind_device(code, device_id, ua)
+    token = make_session(code, device_id)
+    log(f"login ok: device={device_id} code={code[:9]}…")
+    return json_ok({"ok": True, "token": token, **session_payload(key_info(code), device_id)})
+
+
+def _device_codes(device_id: str) -> set:
+    with _db_lock, db() as conn:
+        return {r["code"] for r in conn.execute("SELECT code FROM devices WHERE device_id=?",
+                                                (device_id,))}
+
+
+async def api_logout(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    device_id = str(body.get("device_id") or "").strip()
+    if device_id:
+        drop_session(device_id)
+    return json_ok({"ok": True})
+
+
+async def api_register_memo(request: web.Request) -> web.Response:
+    """Memo для оплаты подписки (kind=sub) или доп. устройств (kind=ext)."""
+    device_id = (request.query.get("device_id") or "").strip()
+    kind = "ext" if (request.query.get("kind") == "ext") else "sub"
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{6,64}", device_id):
+        return json_ok({"ok": False, "error": "Некорректный device_id"}, 400)
+    await refresh_rates()
+    base = ton_usd()
+    if not base:
+        return json_ok({"ok": False, "error": "Курс TON недоступен, повторите позже"}, 503)
+    usd = EXTEND_PRICE_USD if kind == "ext" else ACCESS_PRICE_USD
+    required_ton = round(usd / base, 2)
+    memo = gen_memo("EXT" if kind == "ext" else "SUB")
+    with _db_lock, db() as conn:
+        conn.execute("INSERT OR REPLACE INTO memos(memo, device_id, kind, required_ton, created_at)"
+                     " VALUES(?,?,?,?,?)", (memo, device_id, kind, required_ton, int(time.time())))
+    return json_ok({"ok": True, "memo": memo, "kind": kind, "price_usd": usd,
+                    "required_ton": required_ton, "ton_usd": round(base, 4),
+                    "owner_wallet": OWNER_WALLET, "days": ACCESS_DAYS,
+                    "extra_devices": EXTRA_DEVICES})
+
+
+async def api_register_check(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    device_id = str(body.get("device_id") or "").strip()
+    memo = re.sub(r"[^A-Za-z0-9\-]", "", str(body.get("memo") or ""))[:32].upper()
+    if not device_id or not memo:
+        return json_ok({"ok": False, "error": "Нет device_id или Memo"}, 400)
+    with _db_lock, db() as conn:
+        row = conn.execute("SELECT * FROM memos WHERE memo=?", (memo,)).fetchone()
+    if not row or row["device_id"] != device_id:
+        return json_ok({"ok": False, "error": "Memo не найден для этого устройства"}, 404)
+    await refresh_rates()
+
+    with _db_lock, db() as conn:
+        paid = conn.execute("SELECT 1 FROM payments WHERE memo=?", (memo,)).fetchone()
+    if not paid:
+        try:
+            events = await fetch_ton_events(OWNER_WALLET, 20)
+        except Exception as exc:
+            return json_ok({"ok": False, "error": f"tonapi.io недоступен: {type(exc).__name__}"}, 502)
+        amount, tx_hash = find_ton_payment(events, memo, OWNER_WALLET)
+        required = float(row["required_ton"] or 0)
+        if amount <= 0:
+            return json_ok({"ok": True, "opened": False, "required_ton": required,
+                            "message": "Перевод с этим Memo пока не найден"})
+        if amount + 0.01 < required:
+            return json_ok({"ok": True, "opened": False, "required_ton": required,
+                            "paid_ton": amount,
+                            "message": f"Оплачено {amount:g} TON, требуется {required:g} TON"})
+        with _db_lock, db() as conn:
+            conn.execute("INSERT OR IGNORE INTO payments(memo,user_id,amount,kind,tx_hash,created_at)"
+                         " VALUES(?,?,?,?,?,?)",
+                         (memo, device_id, amount, str(row["kind"]), tx_hash, int(time.time())))
+
+    now = int(time.time())
+    extra_devices = 0
+    code = ""
+    first_activation = False
+    if row["kind"] == "ext":
+        code = str(row["code"] or "").upper()
+        if not code:
+            return json_ok({"ok": False, "error": "Код не привязан к оплате"}, 400)
+        info = key_info(code)
+        if not info:
+            return json_ok({"ok": False, "error": "Код не найден"}, 404)
+        new_limit = int(info["devices_limit"]) + EXTRA_DEVICES
+        with _db_lock, db() as conn:
+            conn.execute("UPDATE license_keys SET devices_limit=? WHERE code=?", (new_limit, code))
+        extra_devices = EXTRA_DEVICES
+    else:
+        code = gen_code()
+        while key_info(code):
+            code = gen_code()
+        valid_until = now + ACCESS_DAYS * 86400
+        with _db_lock, db() as conn:
+            conn.execute("INSERT INTO license_keys(code, vip, devices_limit, valid_until, created_at)"
+                         " VALUES(?,0,?,?,?)", (code, BASE_DEVICES, valid_until, now))
+        first_activation = True
+
+    bind_device(code, device_id)
+    token = make_session(code, device_id)
+    return json_ok({"ok": True, "opened": True, "code": code, "token": token,
+                    "extra_devices": extra_devices, "first_activation": first_activation,
+                    **session_payload(key_info(code), device_id)})
+
+
+async def api_register_extend_for(request: web.Request) -> web.Response:
+    """Memo для доп. устройств по существующему коду (если лимит исчерпан)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    device_id = str(body.get("device_id") or "").strip()
+    code = str(body.get("code") or "").strip().upper()
+    info = key_info(code)
+    if not info or info["vip"]:
+        return json_ok({"ok": False, "error": "Расширение недоступно для этого кода"}, 400)
+    await refresh_rates()
+    if not ton_usd():
+        return json_ok({"ok": False, "error": "Курс TON недоступен"}, 503)
+    required_ton = round(EXTEND_PRICE_USD / ton_usd(), 2)
+    memo = gen_memo("EXT")
+    with _db_lock, db() as conn:
+        conn.execute("INSERT OR REPLACE INTO memos(memo, device_id, kind, code, required_ton, created_at)"
+                     " VALUES(?,?,?,?,?,?)", (memo, device_id, "ext", code, required_ton,
+                                              int(time.time())))
+    return json_ok({"ok": True, "memo": memo, "code": code, "price_usd": EXTEND_PRICE_USD,
+                    "required_ton": required_ton, "ton_usd": round(ton_usd(), 4),
+                    "owner_wallet": OWNER_WALLET, "extra_devices": EXTRA_DEVICES})
+
+
+async def api_devices(request: web.Request) -> web.Response:
+    device_id, err = await require_access(request)
+    if err:
+        return err
+    info = session_for(device_id)
+    code = str(info["code"])
+    devices = key_devices(code)
+    return json_ok({"ok": True, "code": code,
+                    "devices": [{"device_id": d["device_id"],
+                                 "short": d["device_id"][:6] + "…" + d["device_id"][-4:],
+                                 "current": d["device_id"] == device_id,
+                                 "created_at": d["created_at"],
+                                 "last_seen": d["last_seen"],
+                                 "user_agent": d["user_agent"] or ""} for d in devices],
+                    "limit": int(info.get("devices_limit") or BASE_DEVICES),
+                    "vip": bool(info.get("vip"))})
+
+
+async def api_device_revoke(request: web.Request) -> web.Response:
+    device_id, err = await require_access(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    target = str(body.get("target_device") or "").strip()
+    if not target or target == device_id:
+        return json_ok({"ok": False, "error": "Нельзя отвязать текущее устройство"}, 400)
+    info = session_for(device_id)
+    revoke_device(target, str(info["code"]))
+    return json_ok({"ok": True})
+
+
+# ------------------------------------------------------------------------ #
+
+
 def new_deposit_memo(user_id: str) -> str:
     return f"GR-{secrets.token_hex(3).upper()}-{user_id[-5:].upper() or 'USER'}"
 
@@ -437,7 +818,20 @@ def find_ton_payment(events: List[Dict[str, Any]], memo: str,
 # ================================ страницы ================================= #
 
 async def index(request: web.Request) -> web.Response:
-    return web.FileResponse(TEMPLATES_DIR / "index.html")
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "index.html")
+    with open(template_path, "r", encoding="utf-8") as fh:
+        html = fh.read()
+    return web.Response(
+        text=html,
+        content_type="text/html",
+        charset="utf-8",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Gift-Radar-Version": "2026.11.14-landing",
+        },
+    )
 
 
 async def manifest(request: web.Request) -> web.Response:
@@ -485,9 +879,8 @@ async def api_rates(request: web.Request) -> web.Response:
 # ============================ API: доступ ================================== #
 
 async def api_access(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
     await refresh_rates()
-    return json_ok({"ok": True, **access_state(uid)})
+    return json_ok({"ok": True, **access_state(_norm_user_id(request.query.get("user_id")))})
 
 
 async def api_access_memo(request: web.Request) -> web.Response:
@@ -574,18 +967,19 @@ def balance_payload(user_id: str) -> Dict[str, Any]:
 
 
 async def api_balance(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
+    device_id = (request.query.get("device_id") or "").strip()
     await refresh_rates()
-    return json_ok({"ok": True, **balance_payload(uid)})
+    return json_ok({"ok": True, "user_id": device_id, **balance_payload(device_id or "guest")})
 
 
 async def api_topup_memo(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
-    return json_ok({"ok": True, "memo": new_deposit_memo(uid), "deposit_wallet": DEPOSIT_WALLET})
+    device_id = (request.query.get("device_id") or "").strip() or "guest"
+    return json_ok({"ok": True, "memo": new_deposit_memo(device_id),
+                    "deposit_wallet": DEPOSIT_WALLET})
 
 
 async def api_topup_check(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
+    uid = (request.query.get("device_id") or "").strip() or "guest"
     await refresh_rates()
     memo = str(request.query.get("memo") or "").strip()
     if not memo:
@@ -621,16 +1015,10 @@ async def api_topup_check(request: web.Request) -> web.Response:
 # ============================= API: лента ================================== #
 
 async def api_feed(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
+    uid, err = await require_access(request)
+    if err:
+        return err
     await refresh_rates()
-    if not access_active(uid):
-        # paywall: показываем статус подключения и демо-превью (нельзя купить)
-        return json_ok({"ok": False, "paywall": True, "error": "Доступ не оплачен",
-                        "status": "waiting" if not sc.SCANNER.lots else "ok",
-                        "message": ("Подключение к Portals…" if not sc.SCANNER.lots
-                                    else "Доступ закрыт — оплатите подписку"),
-                        "items": [{**lot, "locked": True} for lot in sc.SCANNER.lots[:12]],
-                        "total": 0, "fee": MARKET_FEE, "rates": rates_payload()}, 403)
 
     with _db_lock, db() as conn:
         taken = {row["lot_id"] for row in conn.execute(
@@ -663,10 +1051,10 @@ async def api_feed(request: web.Request) -> web.Response:
 # ========================== API: покупка на сайте ========================== #
 
 async def api_buy(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
+    uid, err = await require_access(request)
+    if err:
+        return err
     await refresh_rates()
-    if not access_active(uid):
-        return json_ok({"ok": False, "error": "Доступ не оплачен", "paywall": True}, 403)
     try:
         body = await request.json()
     except Exception:
@@ -714,7 +1102,9 @@ async def api_buy(request: web.Request) -> web.Response:
 # ============================ API: инвентарь =============================== #
 
 async def api_inventory(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
+    uid, err = await require_access(request)
+    if err:
+        return err
     await refresh_rates()
     with _db_lock, db() as conn:
         rows = [dict(row) for row in conn.execute(
@@ -723,7 +1113,9 @@ async def api_inventory(request: web.Request) -> web.Response:
 
 
 async def api_withdraw(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
+    uid, err = await require_access(request)
+    if err:
+        return err
     await refresh_rates()
     try:
         body = await request.json()
@@ -770,7 +1162,9 @@ async def api_withdraw(request: web.Request) -> web.Response:
 # ======================== API: корзина / заказы ============================ #
 
 async def api_orders(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
+    uid, err = await require_access(request)
+    if err:
+        return err
     with _db_lock, db() as conn:
         rows = [dict(row) for row in conn.execute(
             "SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 200", (uid,))]
@@ -778,7 +1172,9 @@ async def api_orders(request: web.Request) -> web.Response:
 
 
 async def api_withdrawals(request: web.Request) -> web.Response:
-    uid = user_id_of(request)
+    uid, err = await require_access(request)
+    if err:
+        return err
     with _db_lock, db() as conn:
         rows = [dict(row) for row in conn.execute(
             "SELECT * FROM withdrawals WHERE user_id=? ORDER BY created_at DESC LIMIT 200", (uid,))]
@@ -832,6 +1228,16 @@ def create_app() -> web.Application:
     app.router.add_get("/api/access/check", api_access_check)
     app.router.add_post("/api/access/unlock", api_access_unlock)
     app.router.add_get("/api/donate", api_donate)
+
+    # сессии по device_id / лицензионные коды
+    app.router.add_get("/api/session", api_session)
+    app.router.add_post("/api/login", api_login)
+    app.router.add_post("/api/logout", api_logout)
+    app.router.add_get("/api/register/memo", api_register_memo)
+    app.router.add_post("/api/register/check", api_register_check)
+    app.router.add_post("/api/register/extend", api_register_extend_for)
+    app.router.add_get("/api/devices", api_devices)
+    app.router.add_post("/api/devices/revoke", api_device_revoke)
 
     app.router.add_get("/api/balance", api_balance)
     app.router.add_get("/api/topup/memo", api_topup_memo)
